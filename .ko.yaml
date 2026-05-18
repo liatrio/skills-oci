@@ -1,0 +1,15 @@
+defaultBaseImage: cgr.dev/chainguard/static:latest
+defaultPlatforms:
+  - linux/amd64
+  - linux/arm64
+builds:
+  - id: skills-oci
+    main: .
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Env.VERSION}}

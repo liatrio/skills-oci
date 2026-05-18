@@ -1,0 +1,109 @@
+name: Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/skills-oci
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+      ref: ${{ steps.publish.outputs.ref }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up ko
+        uses: ko-build/setup-ko@v0.8
+        with:
+          version: v0.18.0
+        env:
+          KO_DOCKER_REPO: ${{ env.IMAGE }}
+
+      - name: Compute version and tags
+        id: meta
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+            TAGS="${VERSION},latest"
+          else
+            VERSION="main-${GITHUB_SHA::7}"
+            TAGS="${VERSION},latest-main"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push with ko
+        id: publish
+        env:
+          KO_DOCKER_REPO: ${{ env.IMAGE }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          REF=$(ko build . \
+            --bare \
+            --tags="${{ steps.meta.outputs.tags }}" \
+            --platform=linux/amd64,linux/arm64)
+          echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+          DIGEST="${REF##*@}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published image"
+            echo "- \`${{ steps.publish.outputs.ref }}\`"
+            echo "- Digest: \`${{ steps.publish.outputs.digest }}\`"
+            echo "- Verify: \`gh attestation verify oci://${{ env.IMAGE }}@${{ steps.publish.outputs.digest }} --owner ${{ github.repository_owner }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
