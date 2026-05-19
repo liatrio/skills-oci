@@ -59,3 +59,17 @@ jobs:
       id-token: write
       attestations: write
     secrets: inherit
+
+  release-binaries:
+    needs: [test, release]
+    # Only fires on the semantic-release path. Tag pushes are handled by
+    # release.yml's own push trigger; dispatch never produces binaries.
+    # Auto-firing here is required because tags pushed by GITHUB_TOKEN
+    # don't trigger release.yml's push trigger directly.
+    if: |
+      always() && needs.test.result == 'success' &&
+      needs.release.outputs.released == 'true'
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+    secrets: inherit

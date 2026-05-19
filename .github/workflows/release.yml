@@ -9,6 +9,11 @@ on:
   push:
     tags:
       - 'v*'
+  # Also callable from image.yml when semantic-release cuts a new tag on
+  # main. Tags pushed by GITHUB_TOKEN don't fire the push trigger above,
+  # so the workflow_call path is what auto-releases binaries after a
+  # semantic-release merge.
+  workflow_call:
 
 permissions:
   contents: read
