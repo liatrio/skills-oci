@@ -32,3 +32,8 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Node tooling for semantic-release. We commit package.json and
+# package-lock.json; node_modules/ is fetched fresh by `npm ci` in CI
+# and ignored locally.
+node_modules/

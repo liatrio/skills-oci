@@ -1,0 +1,132 @@
+name: Build & Push (reusable)
+
+# Builds the OCI image with ko, pushes to GHCR with multi-arch support,
+# and signs build provenance. The caller decides when to invoke this
+# (tag push, post-release, dispatch).
+
+on:
+  workflow_call:
+    inputs:
+      release-version:
+        description: "Tag to publish (e.g. v1.2.3). Leave empty for dispatch/dev builds."
+        required: false
+        type: string
+        default: ""
+    outputs:
+      digest:
+        description: "Pushed image digest (sha256:...)"
+        value: ${{ jobs.build-and-push.outputs.digest }}
+      ref:
+        description: "Fully-qualified pushed image reference"
+        value: ${{ jobs.build-and-push.outputs.ref }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/skills-oci
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.publish.outputs.digest }}
+      ref: ${{ steps.publish.outputs.ref }}
+    env:
+      KO_DOCKER_REPO: ghcr.io/${{ github.repository_owner }}/skills-oci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up ko
+        uses: ko-build/setup-ko@d982fec422852203cfb2053a8ec6ad302280d04d # v0.8
+        with:
+          version: v0.18.0
+
+      - name: Compute version and tags
+        id: meta
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release-version }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            # Tag push: use the pushed tag verbatim.
+            VERSION="${GITHUB_REF_NAME}"
+            TAGS="${VERSION},latest"
+          elif [[ -n "${RELEASE_TAG}" ]]; then
+            # Main push after semantic-release: use the new tag.
+            VERSION="${RELEASE_TAG}"
+            TAGS="${VERSION},latest"
+          else
+            # workflow_dispatch on a non-tagged ref: dev image scoped to
+            # the dispatching branch so manual runs from a feature branch
+            # don't clobber main's latest-* tag. Slashes aren't legal in
+            # OCI tags, so flatten them.
+            SAFE_REF="${GITHUB_REF_NAME//\//-}"
+            VERSION="${SAFE_REF}-${GITHUB_SHA::7}"
+            TAGS="${VERSION},latest-${SAFE_REF}"
+          fi
+          {
+            echo "version=${VERSION}"
+            echo "tags=${TAGS}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push with ko
+        id: publish
+        shell: bash
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          REF=$(ko build . \
+            --bare \
+            --tags="${TAGS}" \
+            --platform=linux/amd64,linux/arm64)
+          DIGEST="${REF##*@}"
+          {
+            echo "ref=${REF}"
+            echo "digest=${DIGEST}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+      - name: Summary
+        shell: bash
+        env:
+          REF: ${{ steps.publish.outputs.ref }}
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ env.IMAGE }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Published image"
+            echo "- \`${REF}\`"
+            echo "- Digest: \`${DIGEST}\`"
+            echo "- Verify: \`gh attestation verify oci://${IMAGE}@${DIGEST} --owner ${OWNER}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
