@@ -158,7 +158,7 @@ Connect the telemetry package to the actual success branch of `pkg/oci/pull.go` 
 - [ ] 4.14 (REFACTOR) Extract the `(PullResult, command, trigger) -> SkillDownloadedInput` mapping into a small helper in `pkg/oci` or `pkg/telemetry` so `add` and `install` share it.
 - [ ] 4.15 Run `go vet ./... && go test ./... -v` from repo root; assert clean. Commit with `feat(telemetry): wire skill.downloaded emission into add and install`.
 
-### [ ] 5.0 Release pipeline, README docs, and schema-lockstep CI gate
+### [x] 5.0 Release pipeline, README docs, and schema-lockstep CI gate
 
 Productionize the feature: extend `.github/workflows/release.yml` to inject `pkg/telemetry.DefaultEndpoint` and `pkg/telemetry.DefaultToken` via `-ldflags -X` from release-time secrets (with empty-string fallback when secrets are unset, which keeps stock builds effectively off until the collector is stood up — see spec Open Question #1). Vendor the collector's canonical JSON Schema as `pkg/telemetry/testdata/event-v1.json` and add a CI step that validates the Unit 1 golden body against this schema, failing the build on drift (spec Open Question #2). Update `README.md` with a "Telemetry" section documenting what's collected, the `SKILLS_OCI_TELEMETRY=off` opt-out, and a link to the wire contract. Maps to spec Goals and the spec's three Open Questions.
 

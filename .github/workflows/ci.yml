@@ -23,3 +23,11 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      # Producer-side mirror of the collector's schema-lockstep gate. Drift
+      # between docs/telemetry-data-contract.md and the collector's published
+      # event-v1.json must fail CI explicitly so it shows up by name in PR
+      # checks (the previous step also catches this, but this label makes it
+      # readable in the UI).
+      - name: Validate event schema lockstep
+        run: go test ./pkg/telemetry/... -run TestGolden_ValidatesAgainstSchema -v

@@ -26,9 +26,20 @@ jobs:
         run: go test ./...
 
       - name: Build binaries
+        env:
+          # Telemetry defaults injected at release time. When the secrets are
+          # unset (e.g. forks, or before the collector is stood up), these
+          # expand to empty strings — the transport short-circuits on an empty
+          # endpoint, keeping stock builds effectively off until release-time
+          # values are populated. See docs/telemetry-data-contract.md.
+          TELEMETRY_ENDPOINT: ${{ secrets.TELEMETRY_ENDPOINT }}
+          TELEMETRY_TOKEN: ${{ secrets.TELEMETRY_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME}
-          LDFLAGS="-s -w -X main.version=${VERSION}"
+          LDFLAGS="-s -w \
+            -X main.version=${VERSION} \
+            -X github.com/salaboy/skills-oci/pkg/telemetry.DefaultEndpoint=${TELEMETRY_ENDPOINT:-} \
+            -X github.com/salaboy/skills-oci/pkg/telemetry.DefaultToken=${TELEMETRY_TOKEN:-}"
 
           # Linux amd64
           GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/skills-oci-linux-amd64 .
