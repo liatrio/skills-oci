@@ -1,29 +1,15 @@
-name: Release
+name: Release Binaries (reusable)
 
-# Cuts a GitHub Release with cross-platform binaries for every v* tag.
-# Runs alongside image.yml on tag pushes: image.yml publishes the OCI
-# image, release.yml publishes the binary artifacts users install
-# locally (curl, go install, or a future Homebrew tap).
+# Builds cross-platform Go binaries and attaches them to a GitHub
+# Release for the calling ref. Assumes the caller has already run tests;
+# image.yml owns the trigger surface and gates this call on a passing
+# test job.
 
 on:
-  push:
-    tags:
-      - 'v*'
-  # Also callable from image.yml when semantic-release cuts a new tag on
-  # main. Tags pushed by GITHUB_TOKEN don't fire the push trigger above,
-  # so the workflow_call path is what auto-releases binaries after a
-  # semantic-release merge.
   workflow_call:
 
-permissions:
-  contents: read
-
 jobs:
-  test:
-    uses: ./.github/workflows/_test.yml
-
   release:
-    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write

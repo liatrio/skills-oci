@@ -62,14 +62,16 @@ jobs:
 
   release-binaries:
     needs: [test, release]
-    # Only fires on the semantic-release path. Tag pushes are handled by
-    # release.yml's own push trigger; dispatch never produces binaries.
-    # Auto-firing here is required because tags pushed by GITHUB_TOKEN
-    # don't trigger release.yml's push trigger directly.
+    # Publish binaries on the same conditions that publish the image,
+    # minus workflow_dispatch (dev images are not releases):
+    #   - tag pushes (manual / backport)
+    #   - main pushes where semantic-release cut a new version
     if: |
-      always() && needs.test.result == 'success' &&
-      needs.release.outputs.released == 'true'
-    uses: ./.github/workflows/release.yml
+      always() && needs.test.result == 'success' && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+        needs.release.outputs.released == 'true'
+      )
+    uses: ./.github/workflows/_release-binaries.yml
     permissions:
       contents: write
     secrets: inherit
