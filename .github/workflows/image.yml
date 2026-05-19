@@ -30,7 +30,7 @@ jobs:
     # (manual / backport) and PRs skip this job; build-and-push handles
     # those paths directly.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/_release.yml
+    uses: ./.github/workflows/_semantic-release.yml
     permissions:
       contents: write
       issues: write

@@ -1,4 +1,4 @@
-name: Release (reusable)
+name: Semantic Release (reusable)
 
 # Runs semantic-release against the calling ref. Outputs whether a new
 # version was cut so downstream jobs can decide whether to publish.
