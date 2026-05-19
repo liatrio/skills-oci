@@ -170,9 +170,13 @@ jobs:
             VERSION="${RELEASE_TAG}"
             TAGS="${VERSION},latest"
           else
-            # workflow_dispatch on a non-tagged ref: dev image only.
-            VERSION="main-${GITHUB_SHA::7}"
-            TAGS="${VERSION},latest-main"
+            # workflow_dispatch on a non-tagged ref: dev image scoped to
+            # the dispatching branch so manual runs from a feature branch
+            # don't clobber main's latest-* tag. Slashes aren't legal in
+            # OCI tags, so flatten them.
+            SAFE_REF="${GITHUB_REF_NAME//\//-}"
+            VERSION="${SAFE_REF}-${GITHUB_SHA::7}"
+            TAGS="${VERSION},latest-${SAFE_REF}"
           fi
           {
             echo "version=${VERSION}"
