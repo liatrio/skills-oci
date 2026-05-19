@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "sdd-skill-poc": {
+      "source": "/Users/jaydon/Documents/spec-driven-workflow-skill",
+      "sourceType": "local",
+      "computedHash": "17255b0771da79516be395b092de6aef5840a70c0ea8963f9cbdd50174a2a6f5"
+    }
+  }
+}

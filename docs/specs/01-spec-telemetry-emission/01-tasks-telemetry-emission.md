@@ -69,7 +69,7 @@ Establish the pure, IO-free core of the package: a `telemetry.Event` Go type who
 - [x] 1.8 (REFACTOR) Inject the clock and ULID entropy via small unexported function-typed fields (or constructor params) so 1.1's golden test can pin deterministic values; default to wall-clock + crypto/rand in production.
 - [x] 1.9 Run `go vet ./pkg/telemetry/...` and `go test ./pkg/telemetry/... -run TestEvent -v`; assert all pass. Commit with `feat(telemetry): add skill.downloaded event model`.
 
-### [ ] 2.0 Implement the best-effort HTTP transport with config and timeout
+### [x] 2.0 Implement the best-effort HTTP transport with config and timeout
 
 Add the smallest correct HTTP emitter: a package-level `*http.Client` with a 2-second timeout, an `Emit(ctx, event)` entry point that does `POST /v1/events` with `Authorization: Bearer <token>`, and a `Config` struct loaded once from `SKILLS_OCI_TELEMETRY{,_ENDPOINT,_TOKEN}` env vars (with compiled-in `-ldflags` fallbacks injected from `pkg/telemetry/config.go` package-level `var`s). Treat `SKILLS_OCI_TELEMETRY=off` as the only off value. Map `2xx` → success, `4xx` → drop (no retry, log to `last-error.log`), `5xx`/network/timeout → return a `transientErr` for Unit 3 to buffer. This task does NOT yet wire into `oci.Pull`; the proof is purely via `httptest.Server`. Maps to spec Unit 2.
 
