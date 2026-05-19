@@ -1,0 +1,19 @@
+# Pinned by digest for supply-chain immutability. Resolved from
+# cgr.dev/chainguard/static:latest (OCI image index covering linux/amd64
+# and linux/arm64). Chainguard recommends digestabot or renovate to
+# automate bumps; until that lands, this pin is bumped manually.
+defaultBaseImage: cgr.dev/chainguard/static@sha256:77d8b8925dc27970ec2f48243f44c7a260d52c49cd778288e4ee97566e0cb75b
+defaultPlatforms:
+  - linux/amd64
+  - linux/arm64
+builds:
+  - id: skills-oci
+    main: .
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s
+      - -w
+      - -X main.version={{.Env.VERSION}}

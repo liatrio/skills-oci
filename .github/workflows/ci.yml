@@ -1,33 +1,81 @@
 name: CI
 
+# Orchestrator that wires together the reusable test, semantic-release,
+# build-push, and release-binaries workflows. Each stage lives in its
+# own file under .github/workflows/_*.yml; this file owns the triggers,
+# concurrency, and the conditions that decide which stages run.
+
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel redundant PR builds; never cancel in-flight main / tag publishes.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  test:
+    uses: ./.github/workflows/_test.yml
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
+  release:
+    needs: test
+    # semantic-release runs only on direct pushes to main. Tag pushes
+    # (manual / backport) and PRs skip this job; build-and-push handles
+    # those paths directly.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/_semantic-release.yml
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    secrets: inherit
 
-      - name: Build
-        run: go build ./...
+  build-and-push:
+    needs: [test, release]
+    # Publish on:
+    #   - tag pushes (manual / backport release path)
+    #   - main pushes where semantic-release cut a new version
+    #   - manual workflow_dispatch (produces a dev image)
+    # PRs only run `test`.
+    if: |
+      always() && needs.test.result == 'success' && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+        (needs.release.outputs.released == 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    uses: ./.github/workflows/_build-push.yml
+    with:
+      release-version: ${{ needs.release.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    secrets: inherit
 
-      - name: Test
-        run: go test ./...
-
-      # Producer-side mirror of the collector's schema-lockstep gate. Drift
-      # between docs/telemetry-data-contract.md and the collector's published
-      # event-v1.json must fail CI explicitly so it shows up by name in PR
-      # checks (the previous step also catches this, but this label makes it
-      # readable in the UI).
-      - name: Validate event schema lockstep
-        run: go test ./pkg/telemetry/... -run TestGolden_ValidatesAgainstSchema -v
+  release-binaries:
+    needs: [test, release]
+    # Publish binaries on the same conditions that publish the image,
+    # minus workflow_dispatch (dev images are not releases):
+    #   - tag pushes (manual / backport)
+    #   - main pushes where semantic-release cut a new version
+    if: |
+      always() && needs.test.result == 'success' && (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+        needs.release.outputs.released == 'true'
+      )
+    uses: ./.github/workflows/_release-binaries.yml
+    with:
+      # Empty on tag-push (release job skipped), in which case the
+      # reusable workflow falls back to github.ref_name (the tag).
+      version: ${{ needs.release.outputs.version }}
+    permissions:
+      contents: write
+    secrets: inherit
