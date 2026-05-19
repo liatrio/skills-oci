@@ -97,7 +97,7 @@ Add the smallest correct HTTP emitter: a package-level `*http.Client` with a 2-s
 - [ ] 2.10 (REFACTOR) Extract error classification (`classifyHTTPStatus(code int) error`) and the `last-error.log` writer into small unexported helpers; cover with their own table-driven tests.
 - [ ] 2.11 Run `go vet ./pkg/telemetry/... && go test ./pkg/telemetry/... -v`; assert all pass. Commit with `feat(telemetry): add HTTP transport and env-var config`.
 
-### [ ] 3.0 Implement the local NDJSON buffer with cap, eviction, ordered flush
+### [x] 3.0 Implement the local NDJSON buffer with cap, eviction, ordered flush
 
 Add the persistent failure-tolerance layer: a `buffer` component that appends failed events as one JSON object per line to `<UserCacheDir>/skills-oci/telemetry/pending.ndjson`, enforces a 1 MB hard cap with FIFO eviction (oldest line dropped on overflow), tolerates a corrupt trailing line on read, and provides a `Drain(emit func(line []byte) error, max int)` API that drains up to 50 events in FIFO order on each call. File mode `0600`, parent mode `0700`. Re-sends preserve the original `event_id` so the collector's `(client_name, event_id)` dedup makes replays safe. This task uses `t.TempDir()` for all I/O tests and skips perm checks on Windows. Maps to spec Unit 3.
 
