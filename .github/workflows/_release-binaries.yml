@@ -2,7 +2,7 @@ name: Release Binaries (reusable)
 
 # Builds cross-platform Go binaries and attaches them to a GitHub
 # Release for the calling ref. Assumes the caller has already run tests;
-# image.yml owns the trigger surface and gates this call on a passing
+# ci.yml owns the trigger surface and gates this call on a passing
 # test job.
 
 on:

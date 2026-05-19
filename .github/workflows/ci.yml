@@ -1,9 +1,9 @@
-name: Image
+name: CI
 
-# Orchestrator that wires together the reusable test, release, and
-# build-push workflows. Each stage lives in its own file under
-# .github/workflows/_*.yml; this file owns the triggers, concurrency,
-# and the conditions that decide which stages run.
+# Orchestrator that wires together the reusable test, semantic-release,
+# build-push, and release-binaries workflows. Each stage lives in its
+# own file under .github/workflows/_*.yml; this file owns the triggers,
+# concurrency, and the conditions that decide which stages run.
 
 on:
   pull_request:
