@@ -72,6 +72,10 @@ jobs:
         needs.release.outputs.released == 'true'
       )
     uses: ./.github/workflows/_release-binaries.yml
+    with:
+      # Empty on tag-push (release job skipped), in which case the
+      # reusable workflow falls back to github.ref_name (the tag).
+      version: ${{ needs.release.outputs.version }}
     permissions:
       contents: write
     secrets: inherit
