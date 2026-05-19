@@ -126,7 +126,7 @@ Add the persistent failure-tolerance layer: a `buffer` component that appends fa
 - [ ] 3.11 (REFACTOR) Extract atomic-rewrite helper (`rewriteAtomic(path string, lines [][]byte) error`); share between eviction and drain paths.
 - [ ] 3.12 Run `go vet ./pkg/telemetry/... && go test ./pkg/telemetry/... -v`. Commit with `feat(telemetry): add pending.ndjson buffer with cap and ordered drain`.
 
-### [ ] 4.0 Wire emission into `oci.Pull`, `cmd/add`, and `cmd/install`
+### [x] 4.0 Wire emission into `oci.Pull`, `cmd/add`, and `cmd/install`
 
 Connect the telemetry package to the actual success branch of `pkg/oci/pull.go` without introducing cobra coupling. Approach: add an `Emitter` interface (or function-typed field) to `oci.PullOptions` that defaults to a no-op when `nil`, and call it from the success branch after extraction completes. `cmd/add.go` constructs the emitter with `source.command="add"`, `source.trigger="user"`. `cmd/install.go` constructs the emitter with `source.command="install"`, `source.trigger="manifest"` and emits one event per skill it pulls — NOT for skills that are already present and NOT for failed pulls. A `sync.WaitGroup` (or equivalent) in `cmd/root.go`'s post-`Execute` path waits for any in-flight emission goroutines to settle (success, buffered, or 2s timeout) before the process exits. Both the TUI and `--plain` paths of `add` and `install` get the same wiring. Maps to spec Unit 4.
 
