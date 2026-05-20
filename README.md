@@ -328,6 +328,82 @@ docker login
 aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
 ```
 
+## Telemetry
+
+`skills-oci` reports a single `skill.downloaded` event after every
+successful skill pull from `add` or `install` so the project can see real
+adoption signal. Emission is best-effort and non-blocking: failures never
+fail your command, time out beyond 2 seconds, or print errors to your
+terminal.
+
+### What is sent
+
+| Field | Example | Why |
+|---|---|---|
+| `skill.namespace`, `name`, `version`, `digest`, `oci_ref` | the skill you pulled | adoption per skill |
+| `client.{name,version,os,arch}` | `skills-oci`, `0.1.0`, `darwin`, `arm64` | which CLI build is in use |
+| `source.{command,trigger}` | `add`/`install`, `user`/`manifest` | how the pull was initiated |
+| `event_id`, `occurred_at` | a ULID, RFC 3339 UTC | idempotency + timing |
+
+See [`docs/telemetry-data-contract.md`](docs/telemetry-data-contract.md)
+for the canonical wire shape.
+
+### What is **never** sent
+
+- File paths, working directory, hostname, file contents, `SKILL.md`
+  bodies.
+- Environment variables (other than the explicit telemetry config below).
+- Registry credentials, GitHub tokens, or any other secret.
+- Raw user identifiers (GitHub login, email). The forward-looking
+  `actor.id_hash` is a SHA-256 of the underlying value; the raw value is
+  never transmitted.
+
+### Opting out
+
+To disable telemetry, set the env var to the exact value `off`:
+
+```bash
+export SKILLS_OCI_TELEMETRY=off
+```
+
+Any other value (including unset) leaves telemetry on.
+
+### Configuration
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SKILLS_OCI_TELEMETRY` | `on` | `off` disables emission. Any other value (including unset) leaves it on. |
+| `SKILLS_OCI_TELEMETRY_ENDPOINT` | compiled-in via `-ldflags` (empty in stock builds) | Full URL of the collector, including `/v1/events`. Overrides the compiled-in default. |
+| `SKILLS_OCI_TELEMETRY_TOKEN` | compiled-in via `-ldflags` (empty in stock builds) | Bearer token sent in the `Authorization` header. Overrides the compiled-in default. |
+
+Failed sends are appended to
+`<UserCacheDir>/skills-oci/telemetry/pending.ndjson` (capped at 1 MB) and
+drained on the next successful call, so transient collector outages do not
+lose events.
+
+### Local testing
+
+A stdlib-only Python collector lives at
+[`scripts/dev-collector.py`](scripts/dev-collector.py) for verifying the
+producer end-to-end against the wire contract. Run it in one terminal,
+point `SKILLS_OCI_TELEMETRY_ENDPOINT` at it from another, and exercise
+`add`/`install`:
+
+```bash
+# terminal A
+python3 scripts/dev-collector.py
+
+# terminal B
+export SKILLS_OCI_TELEMETRY_ENDPOINT=http://127.0.0.1:8787/v1/events
+export SKILLS_OCI_TELEMETRY_TOKEN=dev-token
+./skills-oci add <registry>/<namespace>/<skill>:<tag> --plain
+```
+
+Flags on the collector exercise specific paths:
+`--fail-first N` (transient → buffer → drain), `--status 400` (4xx →
+`last-error.log`, no buffer growth), `--require-bearer TOKEN` (auth
+header). See the script's docstring for the full list.
+
 ## License
 
 [Apache License 2.0](LICENSE)

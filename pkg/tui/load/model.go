@@ -39,6 +39,8 @@ type Model struct {
 	projectDir string
 	skillsDir  string
 	plainHTTP  bool
+	emitter    oci.SkillDownloadEmitter
+	cliVersion string
 	installed  []string
 	skipped    []string
 	err        error
@@ -46,7 +48,7 @@ type Model struct {
 }
 
 // NewModel creates a new load TUI model.
-func NewModel(projectDir, skillsDir string, plainHTTP bool) Model {
+func NewModel(projectDir, skillsDir string, plainHTTP bool, emitter oci.SkillDownloadEmitter, cliVersion string) Model {
 	if projectDir == "" {
 		projectDir = "."
 	}
@@ -56,6 +58,8 @@ func NewModel(projectDir, skillsDir string, plainHTTP bool) Model {
 		projectDir: projectDir,
 		skillsDir:  skillsDir,
 		plainHTTP:  plainHTTP,
+		emitter:    emitter,
+		cliVersion: cliVersion,
 	}
 }
 
@@ -158,7 +162,7 @@ func (m Model) Err() error {
 
 func (m Model) startLoad() tea.Cmd {
 	return func() tea.Msg {
-		installed, skipped, err := LoadSkills(m.projectDir, m.skillsDir, m.plainHTTP, nil)
+		installed, skipped, err := LoadSkills(m.projectDir, m.skillsDir, m.plainHTTP, nil, m.emitter, m.cliVersion)
 		if err != nil {
 			return loadErrMsg{err: err}
 		}
@@ -167,8 +171,10 @@ func (m Model) startLoad() tea.Cmd {
 }
 
 // LoadSkills reads skills.json and pulls any skills whose directories are missing.
-// Returns the list of installed and skipped skill names.
-func LoadSkills(projectDir, skillsDir string, plainHTTP bool, onStatus func(string)) (installed, skipped []string, err error) {
+// Returns the list of installed and skipped skill names. emitter (if non-nil)
+// receives a SkillDownloadInfo for each freshly-pulled skill; skills that
+// were already present locally do not produce events (cache-hit no-op).
+func LoadSkills(projectDir, skillsDir string, plainHTTP bool, onStatus func(string), emitter oci.SkillDownloadEmitter, cliVersion string) (installed, skipped []string, err error) {
 	manifest, err := skill.LoadManifest(projectDir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("reading skills.json: %w", err)
@@ -227,6 +233,10 @@ func LoadSkills(projectDir, skillsDir string, plainHTTP bool, onStatus func(stri
 			AdditionalOutputDirs: additionalOutputDirs,
 			PlainHTTP:            plainHTTP,
 			OnStatus:             func(phase string) {},
+			CLIVersion:           cliVersion,
+			Emitter:              emitter,
+			Command:              "install",
+			Trigger:              "manifest",
 		})
 		if err != nil {
 			return installed, skipped, fmt.Errorf("pulling %s: %w", s.Name, err)

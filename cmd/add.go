@@ -60,11 +60,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	additionalOutputDirs := resolveAdditionalDirs(projectDir, additionalBasePaths)
 
+	emitter := &SkillEmitterAdapter{Emitter: EmitterFromContext(cmd.Context())}
+	cliVersion := CLIVersionFromContext(cmd.Context())
+
 	if plain {
-		return runAddPlain(ref, output, additionalOutputDirs, additionalBasePaths, projectDir, defaultSkillsDir, plainHTTP)
+		return runAddPlain(cmd.Context(), ref, output, additionalOutputDirs, additionalBasePaths, projectDir, defaultSkillsDir, plainHTTP, emitter, cliVersion)
 	}
 
-	m := add.NewModel(ref, output, additionalOutputDirs, additionalBasePaths, projectDir, defaultSkillsDir, plainHTTP)
+	m := add.NewModel(ref, output, additionalOutputDirs, additionalBasePaths, projectDir, defaultSkillsDir, plainHTTP, emitter, cliVersion)
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -102,8 +105,8 @@ func resolveAdditionalDirs(projectDir string, additionalBasePaths []string) []st
 	return dirs
 }
 
-func runAddPlain(ref, output string, additionalOutputDirs, additionalBasePaths []string, projectDir, skillsDir string, plainHTTP bool) error {
-	result, err := oci.Pull(context.Background(), oci.PullOptions{
+func runAddPlain(ctx context.Context, ref, output string, additionalOutputDirs, additionalBasePaths []string, projectDir, skillsDir string, plainHTTP bool, emitter oci.SkillDownloadEmitter, cliVersion string) error {
+	result, err := oci.Pull(ctx, oci.PullOptions{
 		Reference:            ref,
 		OutputDir:            output,
 		AdditionalOutputDirs: additionalOutputDirs,
@@ -111,6 +114,10 @@ func runAddPlain(ref, output string, additionalOutputDirs, additionalBasePaths [
 		OnStatus: func(phase string) {
 			fmt.Printf("  %s\n", phase)
 		},
+		CLIVersion: cliVersion,
+		Emitter:    emitter,
+		Command:    "add",
+		Trigger:    "user",
 	})
 	if err != nil {
 		return err

@@ -25,3 +25,10 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      # Explicit lockstep gate so producer/collector wire-contract drift
+      # surfaces as a named failed step in PR CI logs (the test is also
+      # covered by `go test ./...` above, but the explicit name is the
+      # signal a reviewer notices).
+      - name: Validate event schema lockstep
+        run: go test ./pkg/telemetry/... -run TestGolden_ValidatesAgainstSchema -v

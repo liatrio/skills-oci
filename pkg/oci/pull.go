@@ -20,6 +20,30 @@ import (
 	"oras.land/oras-go/v2/registry/remote"
 )
 
+// SkillDownloadInfo is the structured input PullOptions.Emitter receives on a
+// successful pull. The struct is defined here (and not in pkg/telemetry) so
+// pkg/oci stays free of any telemetry dependency: callers translate this into
+// a telemetry.SkillDownloadedInput at the cmd/* layer.
+type SkillDownloadInfo struct {
+	CLIVersion string
+
+	Namespace string
+	Name      string
+	Version   string
+	Digest    string
+	Registry  string
+	OCIRef    string
+
+	Command string
+	Trigger string
+}
+
+// SkillDownloadEmitter is the narrow callback shape Pull invokes on success.
+// A nil emitter on PullOptions short-circuits emission entirely.
+type SkillDownloadEmitter interface {
+	OnSkillDownloaded(SkillDownloadInfo)
+}
+
 // PullOptions configures a pull operation.
 type PullOptions struct {
 	Reference            string   // Full OCI reference, e.g., "ghcr.io/org/skills/my-skill:1.0.0"
@@ -28,6 +52,19 @@ type PullOptions struct {
 	PlainHTTP            bool
 
 	OnStatus func(phase string)
+
+	// CLIVersion is the value reported as client.version in telemetry events.
+	// May be empty for callers that do not care about telemetry.
+	CLIVersion string
+
+	// Emitter is invoked exactly once on the success branch after extraction
+	// completes. Nil disables telemetry for this pull.
+	Emitter SkillDownloadEmitter
+
+	// Command and Trigger populate source.command / source.trigger in the
+	// emitted event. Ignored when Emitter is nil.
+	Command string
+	Trigger string
 }
 
 // PullResult is returned after a successful pull.
@@ -185,7 +222,7 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 		version = skillConfig.Version
 	}
 
-	return &PullResult{
+	result := &PullResult{
 		Name:       skillConfig.Name,
 		Version:    version,
 		Digest:     desc.Digest.String(),
@@ -193,7 +230,46 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 		Registry:   registry,
 		Repository: repository,
 		Tag:        tag,
-	}, nil
+	}
+
+	if opts.Emitter != nil {
+		opts.Emitter.OnSkillDownloaded(SkillDownloadInfo{
+			CLIVersion: opts.CLIVersion,
+			Namespace:  namespaceFromRepository(repository),
+			Name:       result.Name,
+			Version:    result.Version,
+			Digest:     result.Digest,
+			Registry:   result.Registry,
+			OCIRef:     buildOCIRef(result.Registry, result.Repository, result.Tag),
+			Command:    opts.Command,
+			Trigger:    opts.Trigger,
+		})
+	}
+
+	return result, nil
+}
+
+// buildOCIRef assembles a canonical OCI reference from registry, repository,
+// and the tag-or-digest field produced by parseReference. Digest-pinned pulls
+// place "<alg>:<hex>" into the tag slot; OCI tag grammar forbids ":", so any
+// colon in tag means it is a digest and must be joined with "@" rather than ":".
+// This handles sha256, sha512, and any future algorithm without special-casing.
+func buildOCIRef(registry, repository, tag string) string {
+	if strings.Contains(tag, ":") {
+		return fmt.Sprintf("%s/%s@%s", registry, repository, tag)
+	}
+	return fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+}
+
+// namespaceFromRepository returns the first path segment of an OCI repository,
+// which by convention is the skill namespace. For repositories of the form
+// "<namespace>/skills/<name>" this returns "<namespace>"; for any other shape
+// it returns the first segment as a best-effort default.
+func namespaceFromRepository(repo string) string {
+	if i := strings.Index(repo, "/"); i > 0 {
+		return repo[:i]
+	}
+	return repo
 }
 
 // parseReference splits an OCI reference into registry, repository, and tag.

@@ -41,12 +41,14 @@ type Model struct {
 	projectDir           string
 	skillsDir            string
 	plainHTTP            bool
+	emitter              oci.SkillDownloadEmitter
+	cliVersion           string
 	result               *oci.PullResult
 	err                  error
 }
 
 // NewModel creates a new add TUI model.
-func NewModel(ref, outputDir string, additionalOutputDirs, additionalBasePaths []string, projectDir, skillsDir string, plainHTTP bool) Model {
+func NewModel(ref, outputDir string, additionalOutputDirs, additionalBasePaths []string, projectDir, skillsDir string, plainHTTP bool, emitter oci.SkillDownloadEmitter, cliVersion string) Model {
 	if projectDir == "" {
 		projectDir = "."
 	}
@@ -60,6 +62,8 @@ func NewModel(ref, outputDir string, additionalOutputDirs, additionalBasePaths [
 		projectDir:           projectDir,
 		skillsDir:            skillsDir,
 		plainHTTP:            plainHTTP,
+		emitter:              emitter,
+		cliVersion:           cliVersion,
 	}
 }
 
@@ -157,6 +161,10 @@ func (m Model) startPull() tea.Cmd {
 			AdditionalOutputDirs: m.additionalOutputDirs,
 			PlainHTTP:            m.plainHTTP,
 			OnStatus:             func(phase string) {},
+			CLIVersion:           m.cliVersion,
+			Emitter:              m.emitter,
+			Command:              "add",
+			Trigger:              "user",
 		})
 		if err != nil {
 			return pullErrMsg{err: err}

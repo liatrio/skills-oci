@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/salaboy/skills-oci/pkg/oci"
 	"github.com/salaboy/skills-oci/pkg/tui/load"
 	"github.com/spf13/cobra"
 )
@@ -31,11 +32,14 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	plain, _ := cmd.Flags().GetBool("plain")
 	plainHTTP, _ := cmd.Flags().GetBool("plain-http")
 
+	emitter := &SkillEmitterAdapter{Emitter: EmitterFromContext(cmd.Context())}
+	cliVersion := CLIVersionFromContext(cmd.Context())
+
 	if plain {
-		return runInstallPlain(projectDir, defaultSkillsDir, plainHTTP)
+		return runInstallPlain(projectDir, defaultSkillsDir, plainHTTP, emitter, cliVersion)
 	}
 
-	m := load.NewModel(projectDir, defaultSkillsDir, plainHTTP)
+	m := load.NewModel(projectDir, defaultSkillsDir, plainHTTP, emitter, cliVersion)
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -51,12 +55,12 @@ func runInstall(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runInstallPlain(projectDir, skillsDir string, plainHTTP bool) error {
+func runInstallPlain(projectDir, skillsDir string, plainHTTP bool, emitter oci.SkillDownloadEmitter, cliVersion string) error {
 	fmt.Println("  Reading skills.json")
 
 	installed, skipped, err := load.LoadSkills(projectDir, skillsDir, plainHTTP, func(status string) {
 		fmt.Printf("  %s\n", status)
-	})
+	}, emitter, cliVersion)
 	if err != nil {
 		return err
 	}
