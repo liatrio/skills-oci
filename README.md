@@ -381,6 +381,29 @@ Failed sends are appended to
 drained on the next successful call, so transient collector outages do not
 lose events.
 
+### Local testing
+
+A stdlib-only Python collector lives at
+[`scripts/dev-collector.py`](scripts/dev-collector.py) for verifying the
+producer end-to-end against the wire contract. Run it in one terminal,
+point `SKILLS_OCI_TELEMETRY_ENDPOINT` at it from another, and exercise
+`add`/`install`:
+
+```bash
+# terminal A
+python3 scripts/dev-collector.py
+
+# terminal B
+export SKILLS_OCI_TELEMETRY_ENDPOINT=http://127.0.0.1:8787/v1/events
+export SKILLS_OCI_TELEMETRY_TOKEN=dev-token
+./skills-oci add <registry>/<namespace>/<skill>:<tag> --plain
+```
+
+Flags on the collector exercise specific paths:
+`--fail-first N` (transient → buffer → drain), `--status 400` (4xx →
+`last-error.log`, no buffer growth), `--require-bearer TOKEN` (auth
+header). See the script's docstring for the full list.
+
 ## License
 
 [Apache License 2.0](LICENSE)
