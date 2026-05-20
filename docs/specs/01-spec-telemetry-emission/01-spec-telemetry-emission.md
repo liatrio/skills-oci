@@ -136,7 +136,7 @@ Implementation must follow the patterns already established in this repository:
 - **Errors**: use `fmt.Errorf("...: %w", err)` wrapping, matching the rest of the codebase.
 - **Tests**: table-driven `_test.go` files alongside the code, using `httptest` and `t.TempDir()` for I/O. The existing repo has no test infrastructure for OCI integration; this spec introduces lightweight HTTP-only tests, no real OCI dependency.
 - **Build-time injection**: defaults injected via `-ldflags` in `.github/workflows/release.yml`, following the same pattern as `main.version`.
-- **Commit style**: short imperative subject, matching recent log style (e.g., `add telemetry emission for skill.downloaded`).
+- **Commit style**: use Conventional Commits (e.g., `feat(telemetry): emit skill.downloaded events`). Allowed types: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 - **License/copyright**: no new file headers required (the repo does not use per-file headers).
 
 ## Technical Considerations

@@ -96,14 +96,19 @@ The CLI is controlled by three environment variables. All are read once at start
 | Variable | Default | Effect |
 |---|---|---|
 | `SKILLS_OCI_TELEMETRY` | `on` | `off` disables emission. Any other value (including unset) leaves it on. |
-| `SKILLS_OCI_TELEMETRY_ENDPOINT` | *(TBD — baked-in default)* | Full URL of the collector, including `/v1/events`. Compiled-in default points at the project's hosted collector; setting this env var overrides it (useful for self-hosted deployments or local testing). |
-| `SKILLS_OCI_TELEMETRY_TOKEN` | *(TBD — baked-in default)* | Bearer token sent in the `Authorization` header. Compiled-in default ships with the binary; setting this env var overrides it. |
+| `SKILLS_OCI_TELEMETRY_ENDPOINT` | *(release builds: baked-in via `-ldflags`; source builds: empty → no emission)* | Full URL of the collector, including `/v1/events`. Setting this env var overrides any compiled-in default (useful for self-hosted deployments or local testing). |
+| `SKILLS_OCI_TELEMETRY_TOKEN` | *(release builds: baked-in via `-ldflags`; source builds: empty)* | Bearer token sent in the `Authorization` header. Shared anti-abuse value, not a secret — see [Auth model](#auth-model). Setting this env var overrides any compiled-in default. |
 
-**Default is opt-out (on).** Out of the box, the CLI emits events to the project's hosted collector using the compiled-in endpoint and token. Users who don't want telemetry set `SKILLS_OCI_TELEMETRY=off`. A future `skills-oci config telemetry off` subcommand may persist the choice to user config; that surface is deferred and out of scope here.
+**Behavior depends on how the binary was built.**
 
-The compiled-in `ENDPOINT` and `TOKEN` defaults are placeholder values until the collector is stood up. Once known, they are populated at build time via `-ldflags` (so they live in the binary, not in this repo's source tree). The token in the default build is a shared anti-abuse value, not a secret — see [Configuration: auth model](#configuration) below.
+- **Release builds** (downloaded from GitHub Releases) ship with `ENDPOINT` and `TOKEN` injected at build time via `-ldflags`. Telemetry is **opt-out / on by default**; emission goes to the project's hosted collector. Users set `SKILLS_OCI_TELEMETRY=off` to disable, or override either env var to redirect.
+- **Source builds** (`go build`, `go install`, or `go run` without the release `-ldflags`) leave both `ENDPOINT` and `TOKEN` empty. The transport treats an empty endpoint as a no-op, so telemetry is **effectively off** unless the user explicitly sets `SKILLS_OCI_TELEMETRY_ENDPOINT` (and usually `SKILLS_OCI_TELEMETRY_TOKEN`).
 
-**Auth model.** The token gates "this request came from a real, configured CLI build" — it is shared, not per-user, and the collector treats it as anti-abuse, not identity. Identity (when added) goes in `actor`.
+A future `skills-oci config telemetry off` subcommand may persist the choice to user config; that surface is deferred and out of scope here.
+
+### Auth model
+
+The token gates "this request came from a real, configured CLI build" — it is shared, not per-user, and the collector treats it as anti-abuse, not identity. Identity (when added) goes in `actor`.
 
 ## Transport and reliability
 

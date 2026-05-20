@@ -126,14 +126,21 @@ func (t *Transport) send(ctx context.Context, eventID string, body []byte) error
 	if err != nil {
 		return &TransientError{EventID: eventID, Cause: err}
 	}
-	defer resp.Body.Close()
+	statusErr := classifyHTTPStatus(resp.StatusCode, eventID)
+	closeErr := resp.Body.Close()
 
-	if err := classifyHTTPStatus(resp.StatusCode, eventID); err != nil {
+	if statusErr != nil {
 		var perm *PermanentError
-		if errors.As(err, &perm) {
+		if errors.As(statusErr, &perm) {
 			writeLastError(perm)
 		}
-		return err
+		return statusErr
+	}
+	if closeErr != nil {
+		return &TransientError{
+			EventID: eventID,
+			Cause:   fmt.Errorf("closing response body: %w", closeErr),
+		}
 	}
 	return nil
 }

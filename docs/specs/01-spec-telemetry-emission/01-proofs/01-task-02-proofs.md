@@ -43,9 +43,9 @@ Task 04 is the in-flight orchestration (Task 04 itself).
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -v
-~~~
+```
 
 **Result summary:** PASS — `TestEmit_PostsExpectedBody`,
 `TestEmit_4xxDropsNoRetry`, `TestEmit_5xxReturnsTransient`,
@@ -54,7 +54,7 @@ go test ./pkg/telemetry/... -v
 `TestEmit_EmptyEndpointIsNoOp`, `TestEmit_EmitRawPreservesBody`,
 `TestLoadConfig_EnvOverrides` (7 sub-tests), `TestConfig_LdflagFallback`.
 
-~~~
+```text
 === RUN   TestEmit_PostsExpectedBody
 --- PASS: TestEmit_PostsExpectedBody (0.00s)
 === RUN   TestEmit_4xxDropsNoRetry
@@ -69,7 +69,7 @@ go test ./pkg/telemetry/... -v
 --- PASS: TestEmit_EmptyEndpointIsNoOp (0.00s)
 PASS
 ok  	github.com/salaboy/skills-oci/pkg/telemetry	3.350s
-~~~
+```
 
 ## Artifact: 4xx writes last-error.log
 
@@ -82,9 +82,9 @@ are diagnosable without polluting the user's terminal.
 
 **Sub-test command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -run TestEmit_4xxDropsNoRetry -v
-~~~
+```
 
 **Result summary:** PASS — server hit exactly once, `last-error.log` contains
 both `status=400` and the generated event_id.
@@ -103,9 +103,9 @@ buffer growth from never-deliverable events.
 
 **Command:**
 
-~~~bash
+```bash
 go vet ./pkg/telemetry/...
-~~~
+```
 
 **Result summary:** Exit 0, no findings.
 

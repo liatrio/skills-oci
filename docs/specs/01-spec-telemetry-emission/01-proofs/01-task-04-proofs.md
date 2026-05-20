@@ -51,9 +51,9 @@ contract's required fields populated from the resolved manifest.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/oci/... -run TestPull_EmitsOneEventOnSuccess -v
-~~~
+```
 
 **Result summary:** PASS — server-backed pull → emitter receives one
 `SkillDownloadInfo{Command:"add", Trigger:"user", Name:"example-skill",
@@ -67,9 +67,9 @@ and never invokes the emitter.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/oci/... -run TestPull_EmitsZeroEventsOnFailure -v
-~~~
+```
 
 **Result summary:** PASS.
 
@@ -81,9 +81,9 @@ on first run; a re-run where all directories are present emits 0
 
 **Command:**
 
-~~~bash
+```bash
 go test ./cmd/... -run TestInstall_EmitsPerPulledSkill_AndZeroOnCacheHit -v
-~~~
+```
 
 **Result summary:** PASS — round 1: 3 installed / 3 events / all with
 `(install, manifest)`. Round 2: 3 skipped / 0 events.
@@ -97,9 +97,9 @@ manifest and registry state.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./cmd/... -run TestInstall_PlainAndTUIParity -v
-~~~
+```
 
 **Result summary:** PASS.
 
@@ -107,19 +107,19 @@ go test ./cmd/... -run TestInstall_PlainAndTUIParity -v
 
 **Command:**
 
-~~~bash
+```bash
 go build ./...  && go vet ./...  && go test ./...
-~~~
+```
 
 **Result summary:** all of the above exit 0.
 
-~~~
+```text
 ?   	github.com/salaboy/skills-oci	[no test files]
 ok  	github.com/salaboy/skills-oci/cmd	0.704s
 ok  	github.com/salaboy/skills-oci/pkg/oci	0.451s
 ?   	github.com/salaboy/skills-oci/pkg/skill	[no test files]
 ok  	github.com/salaboy/skills-oci/pkg/telemetry	3.368s
-~~~
+```
 
 ## Reviewer Conclusion
 

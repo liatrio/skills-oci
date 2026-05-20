@@ -41,9 +41,9 @@ passing named test.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -run TestBuffer -v
-~~~
+```
 
 **Result summary:** PASS — 10 tests:
 `TestBuffer_AppendThenRead`, `TestBuffer_CapAndEviction`,
@@ -53,7 +53,7 @@ go test ./pkg/telemetry/... -run TestBuffer -v
 `TestBuffer_DrainPermanentDropsAndContinues`,
 `TestBuffer_AtomicTmpRewrite`.
 
-~~~
+```text
 === RUN   TestBuffer_CapAndEviction
 --- PASS: TestBuffer_CapAndEviction (0.02s)
 === RUN   TestBuffer_DrainsInOrderOnSuccess
@@ -68,7 +68,7 @@ go test ./pkg/telemetry/... -run TestBuffer -v
 --- PASS: TestBuffer_PreservesEventID (0.00s)
 PASS
 ok  	github.com/salaboy/skills-oci/pkg/telemetry  0.280s
-~~~
+```
 
 ## Artifact: 1 MB cap with FIFO eviction
 

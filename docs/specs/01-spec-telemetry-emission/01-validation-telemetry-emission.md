@@ -107,7 +107,7 @@ No CRITICAL, HIGH, or MEDIUM findings.
 
 ### Commits analyzed
 
-```
+```text
 9bfe260 feat(telemetry): release-time defaults, schema lockstep CI, README opt-out docs
 ad25419 feat(telemetry): wire skill.downloaded emission into add and install
 8935303 feat(telemetry): add pending.ndjson buffer with cap and ordered drain
@@ -119,7 +119,7 @@ Each commit message references the parent task it implements (Tasks 1.0 → 5.0 
 
 ### Commands executed
 
-```
+```bash
 $ go vet ./...                                   # exit 0, no output
 $ go test ./...                                  # all packages PASS
 $ go test -count=1 ./cmd/... ./pkg/telemetry/... ./pkg/oci/...

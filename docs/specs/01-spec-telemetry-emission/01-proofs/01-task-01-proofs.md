@@ -39,19 +39,19 @@ immediately and force the contract to be updated deliberately.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -run TestEvent_GoldenBody -v
-~~~
+```
 
 **Result summary:** PASS. Marshaled output equals
 `pkg/telemetry/testdata/event-skill-downloaded.json` byte-for-byte.
 
-~~~
+```text
 === RUN   TestEvent_GoldenBody
 --- PASS: TestEvent_GoldenBody (0.00s)
 PASS
 ok  	github.com/salaboy/skills-oci/pkg/telemetry
-~~~
+```
 
 ## Artifact: ULID + RFC 3339 format conformance
 
@@ -64,9 +64,9 @@ being a valid ULID; analytics depend on parseable timestamps.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -run TestEvent_IDAndTimestampFormats -v
-~~~
+```
 
 **Result summary:** PASS — all 50 iterations satisfy both regexes; sanity
 assertions on `actor.kind`, `schema_version`, and `event_type` also pass.
@@ -82,9 +82,9 @@ are caught at the call site, not at the collector's `4xx` boundary.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -run TestNewSkillDownloaded_RejectsMissingFields -v
-~~~
+```
 
 **Result summary:** PASS — 9 sub-tests, one per required field.
 
@@ -99,9 +99,9 @@ into the JSON body.
 
 **Command:**
 
-~~~bash
+```bash
 go test ./pkg/telemetry/... -run TestEvent_NeverContainsForbiddenSubstrings -v
-~~~
+```
 
 **Result summary:** PASS — no forbidden substring found in the body.
 
@@ -109,9 +109,9 @@ go test ./pkg/telemetry/... -run TestEvent_NeverContainsForbiddenSubstrings -v
 
 **Command:**
 
-~~~bash
+```bash
 go vet ./pkg/telemetry/...
-~~~
+```
 
 **Result summary:** Exit 0, no findings.
 

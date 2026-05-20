@@ -39,13 +39,15 @@ jobs:
 
       - name: Build binaries
         shell: bash
-        # Telemetry defaults are injected via -ldflags from release-time
-        # secrets. Empty fallbacks keep stock builds effectively off
-        # (the transport treats an empty endpoint as no-op) until the
-        # collector is stood up, per the spec's open question #1.
+        # Telemetry defaults are injected via -ldflags from repo/org
+        # variables — not secrets — because the endpoint is a public
+        # URL and the token is a shared anti-abuse value (see
+        # docs/telemetry-data-contract.md "Auth model"). Empty fallbacks
+        # keep stock builds effectively off (the transport treats an
+        # empty endpoint as no-op) until the collector is stood up.
         env:
-          TELEMETRY_ENDPOINT: ${{ secrets.TELEMETRY_ENDPOINT }}
-          TELEMETRY_TOKEN: ${{ secrets.TELEMETRY_TOKEN }}
+          TELEMETRY_ENDPOINT: ${{ vars.TELEMETRY_ENDPOINT }}
+          TELEMETRY_TOKEN: ${{ vars.TELEMETRY_TOKEN }}
         run: |
           set -euo pipefail
           LDFLAGS="-s -w -X main.version=${VERSION} \

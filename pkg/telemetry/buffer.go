@@ -8,16 +8,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 // Buffer is the persistent failure-tolerance layer for telemetry. Failed events
 // are appended one JSON object per line to <dir>/pending.ndjson; the file is
 // capped at maxBytes with FIFO eviction. Drain re-reads lines in insertion
 // order, calling emit for each, up to perFlush per call.
+//
+// Append and Drain are safe to call from multiple goroutines: each emitter
+// EmitSkillDownloaded runs on its own goroutine, so the install command can
+// drive concurrent buffer mutations. mu serializes the read-modify-write of
+// pending.ndjson to keep events from being lost or reordered.
 type Buffer struct {
 	dir      string
 	maxBytes int64
 	perFlush int
+	mu       sync.Mutex
 }
 
 const (
@@ -49,6 +56,9 @@ func (b *Buffer) ensureDir() error {
 // buffer. If the resulting file would exceed maxBytes, the oldest lines are
 // evicted FIFO until the new line fits, then the file is rewritten atomically.
 func (b *Buffer) Append(line []byte) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if err := b.ensureDir(); err != nil {
 		return fmt.Errorf("creating buffer dir: %w", err)
 	}
@@ -67,9 +77,12 @@ func (b *Buffer) Append(line []byte) error {
 		if err != nil {
 			return fmt.Errorf("opening buffer for append: %w", err)
 		}
-		defer f.Close()
-		if _, err := f.Write(withNL); err != nil {
-			return fmt.Errorf("appending to buffer: %w", err)
+		if _, werr := f.Write(withNL); werr != nil {
+			_ = f.Close()
+			return fmt.Errorf("appending to buffer: %w", werr)
+		}
+		if cerr := f.Close(); cerr != nil {
+			return fmt.Errorf("closing buffer after append: %w", cerr)
 		}
 		return nil
 	}
@@ -97,6 +110,9 @@ func (b *Buffer) Append(line []byte) error {
 // After draining, the file is rewritten atomically with whatever lines
 // remain. Returns the number of lines successfully consumed.
 func (b *Buffer) Drain(ctx context.Context, emit func(context.Context, []byte) error, max int) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	lines, err := b.iterLines()
 	if err != nil {
 		return 0, err

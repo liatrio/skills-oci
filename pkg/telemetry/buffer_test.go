@@ -226,7 +226,9 @@ func TestBuffer_PreservesEventID(t *testing.T) {
 func TestBuffer_DrainTransientStopsEarly(t *testing.T) {
 	b := NewBuffer(t.TempDir())
 	for _, id := range []string{"A", "B", "C"} {
-		_ = b.Append([]byte(fmt.Sprintf(`{"event_id":"%s"}`, id)))
+		if err := b.Append([]byte(fmt.Sprintf(`{"event_id":"%s"}`, id))); err != nil {
+			t.Fatalf("Append %s: %v", id, err)
+		}
 	}
 	count := 0
 	emit := func(_ context.Context, _ []byte) error {
@@ -252,7 +254,9 @@ func TestBuffer_DrainTransientStopsEarly(t *testing.T) {
 func TestBuffer_DrainPermanentDropsAndContinues(t *testing.T) {
 	b := NewBuffer(t.TempDir())
 	for _, id := range []string{"A", "B", "C"} {
-		_ = b.Append([]byte(fmt.Sprintf(`{"event_id":"%s"}`, id)))
+		if err := b.Append([]byte(fmt.Sprintf(`{"event_id":"%s"}`, id))); err != nil {
+			t.Fatalf("Append %s: %v", id, err)
+		}
 	}
 	count := 0
 	emit := func(_ context.Context, _ []byte) error {

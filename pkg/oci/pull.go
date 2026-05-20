@@ -233,6 +233,13 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 	}
 
 	if opts.Emitter != nil {
+		// Digest-pinned refs use "@sha256:..." separator; tagged refs use ":<tag>".
+		// parseReference puts the digest into result.Tag for digest pulls, so the
+		// "%s:%s" form would emit an invalid ref. Detect and choose the right joiner.
+		ociRef := fmt.Sprintf("%s/%s:%s", result.Registry, result.Repository, result.Tag)
+		if strings.HasPrefix(result.Tag, "sha256:") {
+			ociRef = fmt.Sprintf("%s/%s@%s", result.Registry, result.Repository, result.Tag)
+		}
 		opts.Emitter.OnSkillDownloaded(SkillDownloadInfo{
 			CLIVersion: opts.CLIVersion,
 			Namespace:  namespaceFromRepository(repository),
@@ -240,7 +247,7 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 			Version:    result.Version,
 			Digest:     result.Digest,
 			Registry:   result.Registry,
-			OCIRef:     fmt.Sprintf("%s/%s:%s", result.Registry, result.Repository, result.Tag),
+			OCIRef:     ociRef,
 			Command:    opts.Command,
 			Trigger:    opts.Trigger,
 		})
