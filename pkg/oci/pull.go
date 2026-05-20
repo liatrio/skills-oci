@@ -233,13 +233,6 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 	}
 
 	if opts.Emitter != nil {
-		// Digest-pinned refs use "@sha256:..." separator; tagged refs use ":<tag>".
-		// parseReference puts the digest into result.Tag for digest pulls, so the
-		// "%s:%s" form would emit an invalid ref. Detect and choose the right joiner.
-		ociRef := fmt.Sprintf("%s/%s:%s", result.Registry, result.Repository, result.Tag)
-		if strings.HasPrefix(result.Tag, "sha256:") {
-			ociRef = fmt.Sprintf("%s/%s@%s", result.Registry, result.Repository, result.Tag)
-		}
 		opts.Emitter.OnSkillDownloaded(SkillDownloadInfo{
 			CLIVersion: opts.CLIVersion,
 			Namespace:  namespaceFromRepository(repository),
@@ -247,13 +240,25 @@ func Pull(ctx context.Context, opts PullOptions) (*PullResult, error) {
 			Version:    result.Version,
 			Digest:     result.Digest,
 			Registry:   result.Registry,
-			OCIRef:     ociRef,
+			OCIRef:     buildOCIRef(result.Registry, result.Repository, result.Tag),
 			Command:    opts.Command,
 			Trigger:    opts.Trigger,
 		})
 	}
 
 	return result, nil
+}
+
+// buildOCIRef assembles a canonical OCI reference from registry, repository,
+// and the tag-or-digest field produced by parseReference. Digest-pinned pulls
+// place "<alg>:<hex>" into the tag slot; OCI tag grammar forbids ":", so any
+// colon in tag means it is a digest and must be joined with "@" rather than ":".
+// This handles sha256, sha512, and any future algorithm without special-casing.
+func buildOCIRef(registry, repository, tag string) string {
+	if strings.Contains(tag, ":") {
+		return fmt.Sprintf("%s/%s@%s", registry, repository, tag)
+	}
+	return fmt.Sprintf("%s/%s:%s", registry, repository, tag)
 }
 
 // namespaceFromRepository returns the first path segment of an OCI repository,
