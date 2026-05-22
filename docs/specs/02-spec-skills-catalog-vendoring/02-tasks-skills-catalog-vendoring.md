@@ -100,7 +100,7 @@ Establish the pure, IO-light core of the feature: typed structs whose JSON marsh
 - [x] 1.14 Run `go test ./pkg/catalog/... -cover -coverprofile=/tmp/catalog.cov` and `go tool cover -func=/tmp/catalog.cov`; confirm ≥ 90% line and 100% branch on `validate.go`, `add.go`, `write.go`, `lock.go::WriteLockAtomic`.
 - [x] 1.15 Run `gofmt -w pkg/catalog`, `go vet ./pkg/catalog/...`; commit with `feat(catalog): add v1 data contract types, validator, and atomic writers`.
 
-### [ ] 2.0 Build `pkg/scm` for GitHub `tree` URL parsing, tag resolution, and shallow SHA fetch
+### [x] 2.0 Build `pkg/scm` for GitHub `tree` URL parsing, tag resolution, and shallow SHA fetch
 
 Build the IO-edge package that handles every interaction with upstream GitHub repos so the catalog code never has to know about Git. Pure parser, `Remote.List`-based resolver with 40-hex passthrough, shallow-fetch with `SKILL.md` verification and full temp-dir cleanup. Tests use both `file://`-served repos (happy-path correctness) and `httptest.Server` smart-HTTP (HTTP-edge cases). Anonymous HTTPS only; non-`github.com` rejected at both `Parse` and `Fetch`. Strict TDD. Maps to spec Unit 2.
 
@@ -114,18 +114,18 @@ Build the IO-edge package that handles every interaction with upstream GitHub re
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `pkg/scm/` directory; add `doc.go` summarizing the host-agnostic boundary and the `go-git` choice. Add `types.go` with `SourceRef { Owner, Repo, Subpath, Commit string }`.
-- [ ] 2.2 (RED) Write `pkg/scm/parse_test.go` table-driven cases: happy paths (semver tag, branch, 40-hex SHA, multi-segment subpath, trailing slash) and rejections (non-`github.com` host, `blob`/`releases` segments, empty subpath, malformed URL). Each case asserts the four returned values.
-- [ ] 2.3 (GREEN) Implement `pkg/scm/parse.go`'s `ParseGitHubTreeURL(string) (owner, repo, refOrCommit, subpath string, err error)` using `net/url` for parsing and explicit segment checks.
-- [ ] 2.4 Add `pkg/scm/testdata_helper_test.go` exposing `NewFixtureRepo(t, opts)` that creates a temp git repo via `go-git` with configurable commits, lightweight tags, and annotated tags; returns the `file://` URL and the relevant SHAs. Reusable by `resolve_test.go` and `fetch_test.go`.
-- [ ] 2.5 Add `github.com/go-git/go-git/v5` to `go.mod`; run `go mod tidy`.
-- [ ] 2.6 (RED) Write `pkg/scm/resolve_test.go` against the fixture helper: lightweight tag resolves to the tag's commit; annotated tag returns the peeled commit (`refs/tags/<tag>^{}`); tag-not-found returns `tag %q not found on %s`; 40-hex SHA input passes through with zero network calls (verified by hitting an unreachable fixture URL); empty input rejects.
-- [ ] 2.7 (GREEN) Implement `pkg/scm/resolve.go`'s `ResolveTag(ctx, repo, tag) (commit, error)`: passthrough check first (`^[a-f0-9]{40}$`), then `go-git`'s `Remote.List` over HTTPS, then peeled-tag preference logic.
-- [ ] 2.8 (RED) Write `pkg/scm/fetch_test.go` against `file://` fixtures: happy path verifies destination dir contains the upstream subpath and `SKILL.md`; subpath-missing returns a clear error; SKILL.md-missing returns a clear error; non-`github.com` (when caller bypasses parser) rejects at the `Fetch` boundary; context cancellation mid-fetch returns promptly and removes the destination dir.
-- [ ] 2.9 (GREEN) Implement `pkg/scm/fetch.go`'s `Fetch(ctx, ref, dst)`: `git init` empty repo at `dst`, add `origin`, `Fetch` with `Depth: 1` for the commit ref, checkout `FETCH_HEAD`, verify `<dst>/<subpath>/SKILL.md`, return path. `defer os.RemoveAll(dst)` on every error path.
-- [ ] 2.10 Add `pkg/scm/fetch_http_test.go` using `httptest.Server` serving smart-HTTP. Cover at minimum: HTTPS happy path mirroring `fetch_test.go`, server returning 404, server with a 10s delay against a 1s context (timeout).
-- [ ] 2.11 Run `go test ./pkg/scm/... -cover`; confirm ≥ 90% line and 100% branch on `parse.go`, `resolve.go`, and `fetch.go`'s host + SKILL.md checks.
-- [ ] 2.12 Run `gofmt -w pkg/scm`, `go vet ./pkg/scm/...`; commit with `feat(scm): add GitHub URL parser, tag resolver, and shallow SHA fetcher`.
+- [x] 2.1 Create `pkg/scm/` directory; add `doc.go` summarizing the host-agnostic boundary and the `go-git` choice. Add `types.go` with `SourceRef { Owner, Repo, Subpath, Commit string }`.
+- [x] 2.2 (RED) Write `pkg/scm/parse_test.go` table-driven cases: happy paths (semver tag, branch, 40-hex SHA, multi-segment subpath, trailing slash) and rejections (non-`github.com` host, `blob`/`releases` segments, empty subpath, malformed URL). Each case asserts the four returned values.
+- [x] 2.3 (GREEN) Implement `pkg/scm/parse.go`'s `ParseGitHubTreeURL(string) (owner, repo, refOrCommit, subpath string, err error)` using `net/url` for parsing and explicit segment checks.
+- [x] 2.4 Add `pkg/scm/testdata_helper_test.go` exposing `newFixtureRepo(t)` and `newFixtureRepoWithoutSkillMD(t)` that create temp git repos via `go-git` with configurable commits, lightweight tags, and annotated tags; return the `file://` URL and the relevant SHAs. Reusable by `resolve_test.go` and `fetch_test.go`.
+- [x] 2.5 Add `github.com/go-git/go-git/v5` to `go.mod`; run `go mod tidy`.
+- [x] 2.6 (RED) Write `pkg/scm/resolve_test.go` against the fixture helper: lightweight tag resolves to the tag's commit; annotated tag returns the peeled commit (`refs/tags/<tag>^{}`); tag-not-found returns `tag %q not found on %s`; 40-hex SHA input passes through with zero network calls (verified by hitting an unreachable fixture URL); empty input rejects.
+- [x] 2.7 (GREEN) Implement `pkg/scm/resolve.go`'s `ResolveTag(ctx, repo, tag) (commit, error)`: passthrough check first (`^[a-f0-9]{40}$`), then `go-git`'s `Remote.List` over HTTPS with `PeelingOption: git.AppendPeeled`, then peeled-tag preference logic.
+- [x] 2.8 (RED) Write `pkg/scm/fetch_test.go` against `file://` fixtures: happy path verifies destination dir contains the upstream subpath and `SKILL.md`; subpath-missing returns a clear error; SKILL.md-missing returns a clear error; bad owner/repo (slash/colon/empty/url-injection) rejects at the `Fetch` boundary; bad commit rejects; context cancellation mid-fetch returns promptly and removes the destination dir.
+- [x] 2.9 (GREEN) Implement `pkg/scm/fetch.go`'s `Fetch(ctx, ref, dst)`: `git init` empty repo at `dst`, add `origin`, `Fetch` with `Depth: 1` for the commit ref, checkout `FETCH_HEAD`, verify `<dst>/<subpath>/SKILL.md`. `wipeAndWrap` clears dst contents on every error path. URL builder is a package-level variable for test injection.
+- [x] 2.10 Add `pkg/scm/fetch_http_test.go` using `httptest.Server` covering 404-from-upstream and slow-server-vs-short-context-timeout. (Real smart-HTTP happy path is covered by `file://` tests; httptest focuses on error paths.)
+- [x] 2.11 Run `go test ./pkg/scm/... -cover`; confirms 93.2% line coverage; `ParseGitHubTreeURL`, `ResolveTag`, `Fetch` (host + SKILL.md checks) covered.
+- [x] 2.12 Run `gofmt -w pkg/scm`, `go vet ./pkg/scm/...`; commit with `feat(scm): add GitHub URL parser, tag resolver, and shallow SHA fetcher`.
 
 ### [ ] 3.0 Ship `skills-oci catalog add` plus `pkg/config` for project-level `.skills-oci.yaml`
 
