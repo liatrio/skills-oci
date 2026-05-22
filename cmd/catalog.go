@@ -44,6 +44,7 @@ func newCatalogCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(newCatalogAddCmd())
+	cmd.AddCommand(newCatalogSyncCmd())
 	return cmd
 }
 

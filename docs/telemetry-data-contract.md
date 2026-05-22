@@ -77,6 +77,48 @@ All fields required and non-null.
 - **`registry`** — registry hostname (today always `ghcr.io`).
 - **`oci_ref`** — the fully-qualified reference as it resolved, tag included (e.g. `ghcr.io/<namespace>/skills/<name>:<version>`). Not necessarily what the user typed — if the user typed a short ref, this is the expanded form.
 
+The `skill` object is omitted from event bodies whose `event_type` is not `skill.downloaded`.
+
+### Catalog payload (for `event_type: catalog.synced`)
+
+Emitted by `skills-oci catalog sync` once per per-entry outcome — every entry produces exactly one event regardless of whether it succeeded, failed, or was skipped. The envelope is identical to `skill.downloaded`; the `skill` object is omitted and a `catalog` object is included instead. `source.command` is always `catalog sync`.
+
+```json
+{
+  "schema_version": 1,
+  "event_id": "...",
+  "event_type": "catalog.synced",
+  "occurred_at": "2026-05-22T18:30:14Z",
+  "client": { "...": "..." },
+  "actor":  { "kind": "anonymous" },
+  "catalog": {
+    "name": "create-skill",
+    "internal_ref": "ghcr.io/liatrio/skills/create-skill",
+    "tag": "v1.0.0",
+    "commit": "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
+    "digest": "sha256:abcd1234...",
+    "upstream_repo": "anthropics/skills",
+    "outcome": "synced"
+  },
+  "source": { "command": "catalog sync", "trigger": "user" }
+}
+```
+
+Field rules:
+
+- **`name`** — local catalog entry name from `catalog.json` (need not match the upstream skill name).
+- **`internal_ref`** — destination OCI ref without tag (matches the catalog entry's `internal_ref`).
+- **`tag`** — version tag derived from `catalog.json`'s `version` field; the same string used in the pushed `<internal_ref>:<tag>`.
+- **`commit`** — upstream 40-hex Git SHA-1 commit pinned in `catalog.json`. Immutable; the load-bearing audit property.
+- **`digest`** — OCI manifest digest of the pushed artifact (`sha256:<hex>`). **Empty string for `outcome=failed` or `outcome=skipped`** since no manifest was written in those cases.
+- **`upstream_repo`** — bare `<owner>/<repo>` slug consumed by Renovate.
+- **`outcome`** — `synced` | `failed` | `skipped`. Failed and skipped entries still emit events so the analytics view of "what happened to this skill" is complete.
+- **`source.trigger`** — `user` (interactive run) or `manifest` (CI / cron / scripted run from `catalog.json`).
+
+The `catalog` object is omitted from event bodies whose `event_type` is not `catalog.synced`.
+
+`skill.downloaded` semantics are unchanged by this addition.
+
 ## What is NEVER sent
 
 The CLI is designed so the following can never appear in an event, even by accident:

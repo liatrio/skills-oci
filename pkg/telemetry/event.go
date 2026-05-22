@@ -11,27 +11,34 @@ import (
 )
 
 // EventType is the dotted "<noun>.<past-tense-verb>" type identifier carried in
-// every event. Today only one value is produced.
+// every event. New event types are an additive change to this list and do
+// not bump schema_version.
 const (
 	EventTypeSkillDownloaded = "skill.downloaded"
+	EventTypeCatalogSynced   = "catalog.synced"
 
-	clientName    = "skills-oci"
+	clientName     = "skills-oci"
 	actorAnonymous = "anonymous"
-	schemaVersion = 1
+	schemaVersion  = 1
 )
 
 // Event is the on-the-wire envelope POSTed to /v1/events. Field order in this
 // struct is the field order in the marshaled JSON body and must match the
 // "Wire shape" section of docs/telemetry-data-contract.md.
+//
+// `skill` and `catalog` are pointer fields with omitempty: each event
+// populates exactly one of them based on EventType, so the wire body
+// never carries an irrelevant payload object.
 type Event struct {
-	SchemaVersion int          `json:"schema_version"`
-	EventID       string       `json:"event_id"`
-	EventType     string       `json:"event_type"`
-	OccurredAt    string       `json:"occurred_at"`
-	Client        ClientInfo   `json:"client"`
-	Actor         Actor        `json:"actor"`
-	Skill         SkillPayload `json:"skill"`
-	Source        SourceInfo   `json:"source"`
+	SchemaVersion int             `json:"schema_version"`
+	EventID       string          `json:"event_id"`
+	EventType     string          `json:"event_type"`
+	OccurredAt    string          `json:"occurred_at"`
+	Client        ClientInfo      `json:"client"`
+	Actor         Actor           `json:"actor"`
+	Skill         *SkillPayload   `json:"skill,omitempty"`
+	Catalog       *CatalogPayload `json:"catalog,omitempty"`
+	Source        SourceInfo      `json:"source"`
 }
 
 // ClientInfo identifies the producing CLI build and host platform.
@@ -58,6 +65,19 @@ type SkillPayload struct {
 	OCIRef    string `json:"oci_ref"`
 }
 
+// CatalogPayload is the catalog-specific body for event_type=catalog.synced.
+// Emitted once per per-entry outcome during `catalog sync`. Digest is empty
+// for non-`synced` outcomes (failed/skipped) since no manifest was written.
+type CatalogPayload struct {
+	Name         string `json:"name"`
+	InternalRef  string `json:"internal_ref"`
+	Tag          string `json:"tag"`
+	Commit       string `json:"commit"`
+	Digest       string `json:"digest"`
+	UpstreamRepo string `json:"upstream_repo"`
+	Outcome      string `json:"outcome"`
+}
+
 // SourceInfo names the CLI surface that drove the event.
 type SourceInfo struct {
 	Command string `json:"command"`
@@ -80,14 +100,43 @@ type SkillDownloadedInput struct {
 	Trigger string
 }
 
-// FieldRequiredError is returned by NewSkillDownloaded when a required input
-// string is empty. The Field name is the JSON key from the contract.
+// CatalogSyncedInput is the structured input the orchestrator passes to
+// NewCatalogSynced. CLIVersion, Name, InternalRef, Tag, Commit,
+// UpstreamRepo, Outcome, and Trigger are required; Digest is only
+// required for Outcome=="synced" (the only outcome that produced a
+// registry manifest).
+type CatalogSyncedInput struct {
+	CLIVersion string
+
+	Name         string
+	InternalRef  string
+	Tag          string
+	Commit       string
+	Digest       string // empty for failed/skipped outcomes
+	UpstreamRepo string
+	Outcome      string // "synced" | "failed" | "skipped"
+
+	Trigger string // "user" | "manifest"
+}
+
+// FieldRequiredError is returned by event constructors when a required
+// input string is empty. The Field name is the JSON key from the contract.
 type FieldRequiredError struct {
 	Field string
 }
 
 func (e *FieldRequiredError) Error() string {
 	return fmt.Sprintf("telemetry: required field %q is empty", e.Field)
+}
+
+// InvalidOutcomeError is returned by NewCatalogSynced when the Outcome
+// field is not one of the documented values.
+type InvalidOutcomeError struct {
+	Outcome string
+}
+
+func (e *InvalidOutcomeError) Error() string {
+	return fmt.Sprintf("telemetry: invalid catalog.synced outcome %q (expected synced/failed/skipped)", e.Outcome)
 }
 
 // Clock, entropy, and platform seams allow tests to pin deterministic values.
@@ -147,7 +196,7 @@ func NewSkillDownloaded(in SkillDownloadedInput) (*Event, error) {
 			Arch:    platformArch(),
 		},
 		Actor: Actor{Kind: actorAnonymous},
-		Skill: SkillPayload{
+		Skill: &SkillPayload{
 			Namespace: in.Namespace,
 			Name:      in.Name,
 			Version:   in.Version,
@@ -157,6 +206,74 @@ func NewSkillDownloaded(in SkillDownloadedInput) (*Event, error) {
 		},
 		Source: SourceInfo{
 			Command: in.Command,
+			Trigger: in.Trigger,
+		},
+	}, nil
+}
+
+// NewCatalogSynced constructs a fully-populated catalog.synced event.
+// Validates required fields and the Outcome enum. Digest is required
+// only for Outcome=="synced".
+func NewCatalogSynced(in CatalogSyncedInput) (*Event, error) {
+	required := []struct {
+		name string
+		val  string
+	}{
+		{"client.version", in.CLIVersion},
+		{"catalog.name", in.Name},
+		{"catalog.internal_ref", in.InternalRef},
+		{"catalog.tag", in.Tag},
+		{"catalog.commit", in.Commit},
+		{"catalog.upstream_repo", in.UpstreamRepo},
+		{"catalog.outcome", in.Outcome},
+		{"source.trigger", in.Trigger},
+	}
+	for _, r := range required {
+		if r.val == "" {
+			return nil, &FieldRequiredError{Field: r.name}
+		}
+	}
+
+	switch in.Outcome {
+	case "synced":
+		if in.Digest == "" {
+			return nil, &FieldRequiredError{Field: "catalog.digest"}
+		}
+	case "failed", "skipped":
+		// digest may be empty
+	default:
+		return nil, &InvalidOutcomeError{Outcome: in.Outcome}
+	}
+
+	t := nowUTC()
+	id, err := newEventID(t)
+	if err != nil {
+		return nil, fmt.Errorf("generating event_id: %w", err)
+	}
+
+	return &Event{
+		SchemaVersion: schemaVersion,
+		EventID:       id,
+		EventType:     EventTypeCatalogSynced,
+		OccurredAt:    t.Truncate(time.Second).Format(time.RFC3339),
+		Client: ClientInfo{
+			Name:    clientName,
+			Version: in.CLIVersion,
+			OS:      platformOS(),
+			Arch:    platformArch(),
+		},
+		Actor: Actor{Kind: actorAnonymous},
+		Catalog: &CatalogPayload{
+			Name:         in.Name,
+			InternalRef:  in.InternalRef,
+			Tag:          in.Tag,
+			Commit:       in.Commit,
+			Digest:       in.Digest,
+			UpstreamRepo: in.UpstreamRepo,
+			Outcome:      in.Outcome,
+		},
+		Source: SourceInfo{
+			Command: "catalog sync",
 			Trigger: in.Trigger,
 		},
 	}, nil
