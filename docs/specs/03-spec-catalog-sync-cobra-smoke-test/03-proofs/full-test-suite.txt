@@ -1,0 +1,16 @@
+?   	github.com/salaboy/skills-oci	[no test files]
+ok  	github.com/salaboy/skills-oci/cmd	(cached)
+ok  	github.com/salaboy/skills-oci/pkg/catalog	(cached)
+ok  	github.com/salaboy/skills-oci/pkg/config	(cached)
+ok  	github.com/salaboy/skills-oci/pkg/oci	(cached)
+ok  	github.com/salaboy/skills-oci/pkg/scm	(cached)
+?   	github.com/salaboy/skills-oci/pkg/skill	[no test files]
+ok  	github.com/salaboy/skills-oci/pkg/telemetry	(cached)
+?   	github.com/salaboy/skills-oci/pkg/tui	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/add	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/collection/add	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/collection/push	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/components	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/load	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/push	[no test files]
+?   	github.com/salaboy/skills-oci/pkg/tui/verify	[no test files]

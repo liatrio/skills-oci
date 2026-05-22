@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/salaboy/skills-oci/pkg/catalog"
+	"github.com/salaboy/skills-oci/pkg/config"
 	"github.com/salaboy/skills-oci/pkg/oci"
 	"github.com/salaboy/skills-oci/pkg/scm"
 	"github.com/salaboy/skills-oci/pkg/skill"
@@ -45,7 +47,54 @@ func newCatalogSyncCmd() *cobra.Command {
 	return cmd
 }
 
+// syncOpts is the resolved set of inputs for `catalog sync`. The Cobra
+// layer parses flags + project config into this struct so the
+// orchestration logic in runCatalogSyncWithDeps stays pure and testable.
+type syncOpts struct {
+	Plain               bool
+	PlainHTTP           bool
+	DryRun              bool
+	Only                []string
+	CatalogPath         string
+	LockPath            string
+	Concurrency         int
+	AllowMissingLicense bool
+
+	// Now is injectable so tests can pin the lockfile's generated_at
+	// timestamp. nil means catalog.Sync uses time.Now().UTC().
+	Now func() time.Time
+}
+
 func runCatalogSync(cmd *cobra.Command, _ []string) error {
+	cfg := configFromContext(cmd.Context())
+	opts := parseSyncOpts(cmd, cfg)
+	emitter := EmitterFromContext(cmd.Context())
+	cliVersion := CLIVersionFromContext(cmd.Context())
+
+	code, err := runCatalogSyncWithDeps(
+		cmd.Context(),
+		cmd.OutOrStdout(),
+		opts,
+		scmFetcherAdapter{},
+		skillLicenseReader{},
+		ociPusherAdapter{},
+		emitter,
+		cliVersion,
+	)
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "catalog sync:", err)
+	}
+	if code != syncExitOK {
+		os.Exit(int(code))
+	}
+	return nil
+}
+
+// parseSyncOpts resolves flag + project-config inputs into a syncOpts
+// value. Pure: no IO, no network. The precedence chain for concurrency
+// and allow-missing-license is: explicit flag > project config > built-in
+// default (concurrency = 4; allow-missing-license = false).
+func parseSyncOpts(cmd *cobra.Command, cfg config.Config) syncOpts {
 	plain, _ := cmd.Flags().GetBool("plain")
 	plainHTTP, _ := cmd.Flags().GetBool("plain-http")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -55,7 +104,6 @@ func runCatalogSync(cmd *cobra.Command, _ []string) error {
 	concurrencyFlag, _ := cmd.Flags().GetInt("concurrency")
 	allowFlag, _ := cmd.Flags().GetBool("allow-missing-license")
 
-	cfg := configFromContext(cmd.Context())
 	concurrency := concurrencyFlag
 	if concurrency <= 0 {
 		concurrency = cfg.Catalog.Concurrency
@@ -65,46 +113,74 @@ func runCatalogSync(cmd *cobra.Command, _ []string) error {
 	}
 	allowMissingLicense := allowFlag || cfg.Catalog.AllowMissingLicense
 
-	// Plain progress writer (used in --plain and as fallback when TUI is
-	// not yet running). The minimum-viable TUI also routes through the
-	// same callback; see pkg/tui/catalog.
-	onEntry := plainProgressWriter(cmd.OutOrStdout())
-
-	// Telemetry wiring: emit one catalog.synced event per entry result.
-	emitter := EmitterFromContext(cmd.Context())
-	cliVersion := CLIVersionFromContext(cmd.Context())
-	onTelemetry := makeCatalogTelemetryCallback(emitter, cliVersion, trigger(plain))
-
-	res, err := catalog.Sync(cmd.Context(), catalog.Opts{
+	return syncOpts{
+		Plain:               plain,
+		PlainHTTP:           plainHTTP,
+		DryRun:              dryRun,
+		Only:                splitOnly(only),
 		CatalogPath:         catalogPath,
 		LockPath:            lockPath,
 		Concurrency:         concurrency,
 		AllowMissingLicense: allowMissingLicense,
-		DryRun:              dryRun,
-		Only:                splitOnly(only),
-		PlainHTTP:           plainHTTP,
+	}
+}
+
+// runCatalogSyncWithDeps is the testable core. Production wraps it with
+// real adapters and translates the returned exit code into os.Exit; tests
+// inject fakes and assert directly on the (code, err) tuple.
+//
+// Returns:
+//   - (syncExitOK, nil) when all entries synced or were skipped.
+//   - (syncExitEntryFail, nil) when one or more entries failed.
+//   - (syncExitEntryFail, err) on a setup failure (catalog load/validate).
+//   - (syncExitLockFail, err) when the lockfile write itself failed —
+//     the registry is ahead of the lockfile and manual reconciliation is
+//     required (see docs/skills-catalog-data-contract.md).
+//
+// The progress summary is always written to out, including on error.
+func runCatalogSyncWithDeps(
+	ctx context.Context,
+	out io.Writer,
+	opts syncOpts,
+	fet catalog.Fetcher,
+	lic catalog.LicenseReader,
+	push catalog.Pusher,
+	emitter *telemetry.Emitter,
+	cliVersion string,
+) (syncExitCode, error) {
+	onEntry := plainProgressWriter(out)
+	onTelemetry := makeCatalogTelemetryCallback(emitter, cliVersion, trigger(opts.Plain))
+
+	res, err := catalog.Sync(ctx, catalog.Opts{
+		CatalogPath:         opts.CatalogPath,
+		LockPath:            opts.LockPath,
+		Concurrency:         opts.Concurrency,
+		AllowMissingLicense: opts.AllowMissingLicense,
+		DryRun:              opts.DryRun,
+		Only:                opts.Only,
+		PlainHTTP:           opts.PlainHTTP,
 		EntryAnnotations:    sourceAnnotation,
 		OnEntry:             onEntry,
 		OnTelemetry:         onTelemetry,
-	}, scmFetcherAdapter{}, skillLicenseReader{}, ociPusherAdapter{})
+		Now:                 opts.Now,
+	}, fet, lic, push)
 
 	if err != nil {
 		// Lockfile-write failure ⇒ exit 2 per the contract; everything
 		// else (catalog load/validate failure) ⇒ exit 1.
 		exit := syncExitEntryFail
-		if strings.Contains(err.Error(), "writing") && strings.Contains(err.Error(), lockPath) {
+		if strings.Contains(err.Error(), "writing") && strings.Contains(err.Error(), opts.LockPath) {
 			exit = syncExitLockFail
 		}
-		writeSyncSummary(cmd.OutOrStdout(), res)
-		fmt.Fprintln(cmd.ErrOrStderr(), "catalog sync:", err)
-		os.Exit(int(exit))
+		writeSyncSummary(out, res)
+		return exit, err
 	}
 
-	writeSyncSummary(cmd.OutOrStdout(), res)
+	writeSyncSummary(out, res)
 	if res.AnyFailed() {
-		os.Exit(int(syncExitEntryFail))
+		return syncExitEntryFail, nil
 	}
-	return nil
+	return syncExitOK, nil
 }
 
 // plainProgressWriter renders the spec-committed --plain status format:
