@@ -6,22 +6,57 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 
 ## Installation
 
-### Homebrew
+### Download a release binary
+
+Release binaries are published on [GitHub Releases](https://github.com/liatrio/skills-oci/releases) along with a `checksums.txt`. The steps below work on macOS and Linux — replace `<ASSET>` with the asset name for your environment.
+
+**1. Pick the asset for your OS and architecture**
+
+| Environment    | `<ASSET>`                  |
+|----------------|-----------------------------|
+| macOS (Apple Silicon) | `skills-oci-darwin-arm64` |
+| macOS (Intel)         | `skills-oci-darwin-amd64` |
+| Linux (x86_64)        | `skills-oci-linux-amd64`  |
+| Linux (arm64)         | `skills-oci-linux-arm64`  |
+
+**2. Download the binary and checksums** (using the [GitHub CLI](https://cli.github.com/))
 
 ```bash
-brew install salaboy/tap/skills-oci
+gh release download -R liatrio/skills-oci -p '<ASSET>' -p 'checksums.txt'
+```
+
+**3. Verify the checksum**
+
+Use `shasum -a 256` on macOS or `sha256sum` on Linux:
+
+```bash
+shasum -a 256 -c checksums.txt --ignore-missing   # macOS
+sha256sum -c checksums.txt --ignore-missing       # Linux
+```
+
+**4. Install to your `PATH`**
+
+```bash
+chmod +x <ASSET>
+sudo mv <ASSET> /usr/local/bin/skills-oci
+```
+
+**5. Confirm it works**
+
+```bash
+skills-oci --help
 ```
 
 ### Go install
 
 ```bash
-go install github.com/salaboy/skills-oci@latest
+go install github.com/liatrio/skills-oci@latest
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/salaboy/skills-oci.git
+git clone https://github.com/liatrio/skills-oci.git
 cd skills-oci
 go build -o skills-oci .
 ```
@@ -228,7 +263,11 @@ Project start → Claude Code launches
 **Step 1 — Install skills-oci**
 
 ```bash
-brew install salaboy/tap/skills-oci
+gh release download -R liatrio/skills-oci -p 'skills-oci-darwin-arm64' -p 'checksums.txt'
+shasum -a 256 -c checksums.txt --ignore-missing
+chmod +x skills-oci-darwin-arm64
+sudo mv skills-oci-darwin-arm64 /usr/local/bin/skills-oci
+skills-oci --help
 ```
 
 **Step 2 — Declare your skills**
@@ -240,7 +279,7 @@ Create a `skills.json` in your project root (or add skills interactively via `sk
   "skills": [
     {
       "name": "manage-pull-requests",
-      "source": "ghcr.io/salaboy/skills/manage-pull-requests",
+      "source": "ghcr.io/liatrio/skills/manage-pull-requests",
       "version": "1.0.0"
     }
   ]
