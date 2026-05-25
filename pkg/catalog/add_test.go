@@ -8,7 +8,8 @@ import (
 func TestAddEntry_AppendsAtTail(t *testing.T) {
 	a := validEntry()
 	a.Name = "first"
-	c := Catalog{SchemaVersion: 1, Skills: []Entry{a}}
+	c := validCatalog()
+	c.Skills = []Entry{a}
 
 	b := validEntry()
 	b.Name = "second"
@@ -28,7 +29,8 @@ func TestAddEntry_AppendsAtTail(t *testing.T) {
 func TestAddEntry_DoesNotMutateInput(t *testing.T) {
 	a := validEntry()
 	a.Name = "first"
-	in := Catalog{SchemaVersion: 1, Skills: []Entry{a}}
+	in := validCatalog()
+	in.Skills = []Entry{a}
 
 	b := validEntry()
 	b.Name = "second"
@@ -43,7 +45,8 @@ func TestAddEntry_DoesNotMutateInput(t *testing.T) {
 }
 
 func TestAddEntry_EmptyCatalogStillValid(t *testing.T) {
-	in := Catalog{SchemaVersion: 1}
+	in := validCatalog()
+	in.Skills = nil
 	e := validEntry()
 	out, err := AddEntry(in, e)
 	if err != nil {
@@ -59,7 +62,8 @@ func TestAddEntry_EmptyCatalogStillValid(t *testing.T) {
 
 func TestAddEntry_DuplicateNameReturnsValidateError(t *testing.T) {
 	e := validEntry()
-	in := Catalog{SchemaVersion: 1, Skills: []Entry{e}}
+	in := validCatalog()
+	in.Skills = []Entry{e}
 
 	_, err := AddEntry(in, e)
 	if err == nil {
@@ -71,7 +75,8 @@ func TestAddEntry_DuplicateNameReturnsValidateError(t *testing.T) {
 }
 
 func TestAddEntry_RejectsInvalidEntry(t *testing.T) {
-	in := Catalog{SchemaVersion: 1}
+	in := validCatalog()
+	in.Skills = nil
 	bad := validEntry()
 	bad.Commit = "not-a-sha"
 
@@ -85,15 +90,16 @@ func TestAddEntry_RejectsInvalidEntry(t *testing.T) {
 }
 
 func TestAddEntry_BootstrapsSchemaVersion(t *testing.T) {
-	// AddEntry on a zero-value Catalog (SchemaVersion=0) should bootstrap
-	// to v1 so callers building from scratch don't have to set it.
-	in := Catalog{} // SchemaVersion intentionally 0
+	// AddEntry on a zero-value Catalog should bootstrap to the current
+	// schema (v2) so callers building from scratch don't have to set it.
+	// GeneratedAt must still be set by the caller.
+	in := Catalog{GeneratedAt: validCatalog().GeneratedAt}
 	out, err := AddEntry(in, validEntry())
 	if err != nil {
 		t.Fatalf("AddEntry returned error: %v", err)
 	}
-	if out.SchemaVersion != 1 {
-		t.Errorf("SchemaVersion = %d, want 1 (auto-bootstrap)", out.SchemaVersion)
+	if out.SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2 (auto-bootstrap)", out.SchemaVersion)
 	}
 }
 
@@ -103,7 +109,8 @@ func TestAddEntry_ReturnsNewSlice(t *testing.T) {
 	// returned value's data through the shared underlying array.
 	a := validEntry()
 	a.Name = "first"
-	in := Catalog{SchemaVersion: 1, Skills: make([]Entry, 1, 4)}
+	in := validCatalog()
+	in.Skills = make([]Entry, 1, 4)
 	in.Skills[0] = a
 
 	b := validEntry()

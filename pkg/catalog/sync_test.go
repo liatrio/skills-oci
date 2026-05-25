@@ -118,7 +118,12 @@ func (p *fakePusher) Push(_ context.Context, in PushInput) (string, error) {
 func writeCatalog(t *testing.T, dir string, entries ...Entry) string {
 	t.Helper()
 	path := filepath.Join(dir, "catalog.json")
-	if err := WriteCatalogAtomic(path, Catalog{SchemaVersion: 1, Skills: entries}); err != nil {
+	c := Catalog{
+		SchemaVersion: 2,
+		GeneratedAt:   time.Date(2026, 5, 22, 18, 30, 0, 0, time.UTC),
+		Skills:        entries,
+	}
+	if err := WriteCatalogAtomic(path, c); err != nil {
 		t.Fatalf("WriteCatalogAtomic: %v", err)
 	}
 	return path
@@ -126,23 +131,74 @@ func writeCatalog(t *testing.T, dir string, entries ...Entry) string {
 
 func validSyncEntry() Entry {
 	return Entry{
-		Name:        "create-skill",
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/create-skill",
-		Version:     "v1.0.0",
-		Commit:      "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
-		InternalRef: "ghcr.io/liatrio/skills/create-skill",
+		Namespace:     "liatrio",
+		Name:          "create-skill",
+		LatestVersion: "1.0.0",
+		UpdatedAt:     time.Date(2026, 5, 22, 18, 30, 0, 0, time.UTC),
+		Status:        StatusPublished,
+		Visibility:    VisibilityPublic,
+		Repo:          "anthropics/skills",
+		Subpath:       "skills/create-skill",
+		Version:       "v1.0.0",
+		Commit:        "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
+		InternalRef:   "ghcr.io/liatrio/skills/create-skill",
 	}
 }
 
 func secondSyncEntry() Entry {
 	return Entry{
-		Name:        "other-skill",
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/other-skill",
-		Version:     "v2.0.0",
-		Commit:      "d4f8a2e97c5b21340eefaaaaaaaaaaaaaaaaaaaa",
-		InternalRef: "ghcr.io/liatrio/skills/other-skill",
+		Namespace:     "liatrio",
+		Name:          "other-skill",
+		LatestVersion: "2.0.0",
+		UpdatedAt:     time.Date(2026, 5, 22, 18, 30, 0, 0, time.UTC),
+		Status:        StatusPublished,
+		Visibility:    VisibilityPublic,
+		Repo:          "anthropics/skills",
+		Subpath:       "skills/other-skill",
+		Version:       "v2.0.0",
+		Commit:        "d4f8a2e97c5b21340eefaaaaaaaaaaaaaaaaaaaa",
+		InternalRef:   "ghcr.io/liatrio/skills/other-skill",
+	}
+}
+
+// indexerSyncEntry returns an indexer-managed row: v2 surface fields only,
+// no source-pin fields. Sync must silently skip rows like this.
+func indexerSyncEntry() Entry {
+	return Entry{
+		Namespace:     "liatrio",
+		Name:          "otel-instrumentation",
+		LatestVersion: "1.0.0",
+		UpdatedAt:     time.Date(2026, 5, 6, 19, 12, 59, 0, time.UTC),
+		Status:        StatusPublished,
+		Visibility:    VisibilityPublic,
+	}
+}
+
+func TestSync_SkipsIndexerManagedRows(t *testing.T) {
+	// A catalog mixing indexer-managed and vendor-managed rows must only
+	// fetch+push the vendor rows. The indexer row has no source-pin
+	// fields, so sync has nothing to do for it. It does not count as
+	// synced/failed/skipped — it's simply not part of the work.
+	dir := t.TempDir()
+	catPath := writeCatalog(t, dir, indexerSyncEntry(), validSyncEntry())
+	lockPath := filepath.Join(dir, "catalog-lock.json")
+
+	pusher := &fakePusher{}
+	res, err := Sync(context.Background(), Opts{
+		CatalogPath: catPath,
+		LockPath:    lockPath,
+		Now:         func() time.Time { return time.Date(2026, 5, 22, 18, 30, 0, 0, time.UTC) },
+	}, &fakeFetcher{writeSkillMD: true}, fakeLicenseReader{defaultLicense: "Apache-2.0"}, pusher)
+	if err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	synced, failed, skipped := res.Counts()
+	if synced != 1 || failed != 0 || skipped != 0 {
+		t.Errorf("counts = (synced=%d failed=%d skipped=%d); want (1,0,0)", synced, failed, skipped)
+	}
+	if len(pusher.calls) != 1 {
+		t.Errorf("pusher called %d times, want 1 (only vendor row should push)", len(pusher.calls))
 	}
 }
 
@@ -447,17 +503,32 @@ func TestSync_FetcherFailureSurfaces(t *testing.T) {
 
 func TestSync_InvalidCatalogReturnsSetupError(t *testing.T) {
 	dir := t.TempDir()
-	// Write a catalog with a deliberately invalid commit so Validate rejects.
-	bad := Entry{
-		Name: "x", Repo: "x/y", Subpath: "s", Version: "v1.0.0",
-		Commit: "not-a-sha", InternalRef: "ghcr.io/x/y",
-	}
 	path := filepath.Join(dir, "catalog.json")
 	// Bypass WriteCatalogAtomic's Validate so we can land an invalid file.
-	if err := os.WriteFile(path, []byte(`{"schemaVersion":1,"skills":[{"name":"x","repo":"x/y","subpath":"s","version":"v1.0.0","commit":"not-a-sha","internal_ref":"ghcr.io/x/y"}]}`), 0o644); err != nil {
+	// Catalog is v2-shaped on the surface; one entry has a non-hex commit
+	// so Validate's source-pin check rejects it.
+	body := `{
+  "schema_version": 2,
+  "generated_at": "2026-05-22T18:30:00Z",
+  "skills": [
+    {
+      "namespace": "liatrio",
+      "name": "x",
+      "latest_version": "1.0.0",
+      "updated_at": "2026-05-22T18:30:00Z",
+      "status": "published",
+      "visibility": "public",
+      "repo": "x/y",
+      "subpath": "s",
+      "version": "v1.0.0",
+      "commit": "not-a-sha",
+      "internal_ref": "ghcr.io/x/y"
+    }
+  ]
+}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	_ = bad
 
 	_, err := Sync(context.Background(), Opts{CatalogPath: path, LockPath: filepath.Join(dir, "lock.json")}, &fakeFetcher{}, fakeLicenseReader{}, &fakePusher{})
 	if err == nil {

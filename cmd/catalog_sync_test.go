@@ -154,12 +154,22 @@ func (p *syncFakePusher) callCount() int {
 	return len(p.calls)
 }
 
+// fixedFixtureTime is the canonical timestamp used across sync-test
+// catalogs so writes are deterministic and any v2 timestamps land on the
+// same UTC value.
+var fixedFixtureTime = time.Date(2026, 5, 22, 18, 30, 0, 0, time.UTC)
+
 // writeTestCatalog writes a catalog.json with the given entries under dir
 // and returns its path. Mirrors the helper in pkg/catalog/sync_test.go.
 func writeTestCatalog(t *testing.T, dir string, entries ...catalog.Entry) string {
 	t.Helper()
 	path := filepath.Join(dir, "catalog.json")
-	if err := catalog.WriteCatalogAtomic(path, catalog.Catalog{SchemaVersion: 1, Skills: entries}); err != nil {
+	c := catalog.Catalog{
+		SchemaVersion: 2,
+		GeneratedAt:   fixedFixtureTime,
+		Skills:        entries,
+	}
+	if err := catalog.WriteCatalogAtomic(path, c); err != nil {
 		t.Fatalf("WriteCatalogAtomic: %v", err)
 	}
 	return path
@@ -168,24 +178,34 @@ func writeTestCatalog(t *testing.T, dir string, entries ...catalog.Entry) string
 // validSyncEntry returns a known-good catalog entry for tests.
 func validSyncEntry() catalog.Entry {
 	return catalog.Entry{
-		Name:        "create-skill",
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/create-skill",
-		Version:     "v1.0.0",
-		Commit:      "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
-		InternalRef: "ghcr.io/liatrio/skills/create-skill",
+		Namespace:     "liatrio",
+		Name:          "create-skill",
+		LatestVersion: "1.0.0",
+		UpdatedAt:     fixedFixtureTime,
+		Status:        catalog.StatusPublished,
+		Visibility:    catalog.VisibilityPublic,
+		Repo:          "anthropics/skills",
+		Subpath:       "skills/create-skill",
+		Version:       "v1.0.0",
+		Commit:        "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
+		InternalRef:   "ghcr.io/liatrio/skills/create-skill",
 	}
 }
 
 // secondSyncEntry returns a distinct known-good entry for multi-entry tests.
 func secondSyncEntry() catalog.Entry {
 	return catalog.Entry{
-		Name:        "other-skill",
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/other-skill",
-		Version:     "v2.0.0",
-		Commit:      "d4f8a2e97c5b21340eefaaaaaaaaaaaaaaaaaaaa",
-		InternalRef: "ghcr.io/liatrio/skills/other-skill",
+		Namespace:     "liatrio",
+		Name:          "other-skill",
+		LatestVersion: "2.0.0",
+		UpdatedAt:     fixedFixtureTime,
+		Status:        catalog.StatusPublished,
+		Visibility:    catalog.VisibilityPublic,
+		Repo:          "anthropics/skills",
+		Subpath:       "skills/other-skill",
+		Version:       "v2.0.0",
+		Commit:        "d4f8a2e97c5b21340eefaaaaaaaaaaaaaaaaaaaa",
+		InternalRef:   "ghcr.io/liatrio/skills/other-skill",
 	}
 }
 
@@ -413,12 +433,17 @@ func TestRunCatalogSync_OnlyFilterRespected(t *testing.T) {
 	e1 := validSyncEntry()
 	e2 := secondSyncEntry()
 	e3 := catalog.Entry{
-		Name:        "third-skill",
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/third-skill",
-		Version:     "v3.0.0",
-		Commit:      "f1e2d3c4b5a6cccccccccccccccccccccccccccc",
-		InternalRef: "ghcr.io/liatrio/skills/third-skill",
+		Namespace:     "liatrio",
+		Name:          "third-skill",
+		LatestVersion: "3.0.0",
+		UpdatedAt:     fixedFixtureTime,
+		Status:        catalog.StatusPublished,
+		Visibility:    catalog.VisibilityPublic,
+		Repo:          "anthropics/skills",
+		Subpath:       "skills/third-skill",
+		Version:       "v3.0.0",
+		Commit:        "f1e2d3c4b5a6cccccccccccccccccccccccccccc",
+		InternalRef:   "ghcr.io/liatrio/skills/third-skill",
 	}
 	catPath := writeTestCatalog(t, dir, e1, e2, e3)
 	lockPath := filepath.Join(dir, "catalog-lock.json")

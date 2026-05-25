@@ -3,15 +3,18 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/salaboy/skills-oci/pkg/catalog"
 	"github.com/salaboy/skills-oci/pkg/scm"
+	"github.com/salaboy/skills-oci/pkg/skill"
 )
 
 // fakeResolver returns a canned SHA for any tag. Used to avoid network.
@@ -90,20 +93,240 @@ func TestRunCatalogAddWithDeps_HappyPathURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	if c.SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2", c.SchemaVersion)
+	}
+	if c.GeneratedAt.IsZero() || c.GeneratedAt.Location() != time.UTC {
+		t.Errorf("GeneratedAt = %v, want non-zero UTC", c.GeneratedAt)
+	}
 	if len(c.Skills) != 1 {
 		t.Fatalf("len(Skills) = %d, want 1", len(c.Skills))
 	}
 	got := c.Skills[0]
-	want := catalog.Entry{
-		Name:        "create-skill",
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/create-skill",
-		Version:     "v1.0.0",
-		Commit:      "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
-		InternalRef: "ghcr.io/liatrio/skills/create-skill",
+	// Surface fields the platform validator enforces.
+	if got.Namespace != "liatrio" || got.Name != "create-skill" {
+		t.Errorf("surface identifiers = %q/%q, want liatrio/create-skill", got.Namespace, got.Name)
 	}
-	if got != want {
-		t.Errorf("entry = %+v, want %+v", got, want)
+	if got.Status != catalog.StatusPublished || got.LatestVersion != "1.0.0" {
+		t.Errorf("status/latest_version = %q/%q, want published/1.0.0", got.Status, got.LatestVersion)
+	}
+	if got.Visibility != catalog.VisibilityPublic {
+		t.Errorf("visibility = %q, want public", got.Visibility)
+	}
+	if got.UpdatedAt.IsZero() || got.UpdatedAt.Location() != time.UTC {
+		t.Errorf("UpdatedAt = %v, want non-zero UTC", got.UpdatedAt)
+	}
+	// Source-pin fields carried for catalog sync.
+	if got.Repo != "anthropics/skills" || got.Subpath != "skills/create-skill" ||
+		got.Version != "v1.0.0" || got.Commit != "bc6708cbbc37adb919157f04d31e601e68f4b9c2" ||
+		got.InternalRef != "ghcr.io/liatrio/skills/create-skill" {
+		t.Errorf("source-pin fields = %+v", got)
+	}
+}
+
+func TestRunCatalogAddWithDeps_MigratesLegacyV1CatalogFile(t *testing.T) {
+	// A v1-shaped catalog file (schemaVersion: 1, no generated_at, entries
+	// lacking v2 surface fields) is silently migrated to v2 on load so
+	// `catalog add` can append to legacy files written by older versions
+	// of skills-oci. The rewritten file ends up v2-compliant.
+	out := &bytes.Buffer{}
+	catalogPath := tempCatalogPath(t)
+
+	// Write a legacy v1 catalog to disk by hand — WriteCatalogAtomic would
+	// reject it via Validate, which is the whole point of the migration.
+	legacy := `{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "name": "existing-skill",
+      "repo": "anthropics/skills",
+      "subpath": "skills/existing-skill",
+      "version": "v0.5.0",
+      "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "internal_ref": "ghcr.io/liatrio/skills/existing-skill"
+    }
+  ]
+}`
+	if err := os.WriteFile(catalogPath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: catalogPath,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+
+	body, _ := os.ReadFile(catalogPath)
+	c, err := catalog.Load(body)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2", c.SchemaVersion)
+	}
+	if c.GeneratedAt.IsZero() {
+		t.Error("GeneratedAt unset after migration")
+	}
+	if len(c.Skills) != 2 {
+		t.Fatalf("len(Skills) = %d, want 2 (legacy + new)", len(c.Skills))
+	}
+	// Legacy row got v2 surface fields filled in.
+	legacyRow := c.Skills[0]
+	if legacyRow.Namespace != "liatrio" {
+		t.Errorf("legacy namespace = %q, want liatrio", legacyRow.Namespace)
+	}
+	if legacyRow.Status != catalog.StatusPublished || legacyRow.LatestVersion != "0.5.0" {
+		t.Errorf("legacy status/latest_version = %q/%q, want published/0.5.0", legacyRow.Status, legacyRow.LatestVersion)
+	}
+	if legacyRow.Visibility != catalog.VisibilityPublic {
+		t.Errorf("legacy visibility = %q, want public", legacyRow.Visibility)
+	}
+	if legacyRow.UpdatedAt.IsZero() {
+		t.Error("legacy UpdatedAt unset after migration")
+	}
+	// Legacy source-pin fields preserved.
+	if legacyRow.Repo != "anthropics/skills" || legacyRow.Commit != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Errorf("legacy source-pin fields lost: %+v", legacyRow)
+	}
+}
+
+func TestRunCatalogAddWithDeps_WritesDetailFileWhenDetailDirSet(t *testing.T) {
+	// With --detail-dir set, the detail file lands at
+	// <detail-dir>/<namespace>/<name>.json. Without it, no detail file
+	// is written (covered by a separate test).
+	out := &bytes.Buffer{}
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+	detailDir := filepath.Join(dir, "skills")
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: catalogPath,
+		DetailDir:   detailDir,
+	}
+	res := fakeResolver{commit: commit}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+
+	detailPath := filepath.Join(detailDir, "liatrio", "create-skill.json")
+	body, err := os.ReadFile(detailPath)
+	if err != nil {
+		t.Fatalf("detail file not written at %s: %v", detailPath, err)
+	}
+	var detail catalog.SkillDetail
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatalf("Unmarshal detail: %v", err)
+	}
+	if err := catalog.ValidateSkillDetail(detail); err != nil {
+		t.Errorf("written detail fails own validator: %v", err)
+	}
+	if detail.Namespace != "liatrio" || detail.Name != "create-skill" {
+		t.Errorf("namespace/name = %q/%q", detail.Namespace, detail.Name)
+	}
+	if detail.LatestVersion != "1.0.0" {
+		t.Errorf("latest_version = %q, want 1.0.0", detail.LatestVersion)
+	}
+	if detail.OCIRef != "ghcr.io/liatrio/skills/create-skill" {
+		t.Errorf("oci_ref = %q", detail.OCIRef)
+	}
+	// repo_url should point at the original upstream ref (the tag the
+	// user vendored at) — not the resolved commit. Keeps the link
+	// human-readable for tagged inputs.
+	wantRepoURL := "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill"
+	if detail.RepoURL != wantRepoURL {
+		t.Errorf("repo_url = %q, want %q", detail.RepoURL, wantRepoURL)
+	}
+	_ = commit // still referenced by other assertions above
+	if len(detail.Versions) != 1 {
+		t.Fatalf("versions = %d, want 1", len(detail.Versions))
+	}
+	if !strings.Contains(detail.Versions[0].Body, "fake body") {
+		t.Errorf("versions[0].body lacks SKILL.md content: %q", detail.Versions[0].Body)
+	}
+}
+
+// jsonForDetailTest is a thin helper that unmarshals a JSON file into a
+// SkillDetail, panicking on failure — only used in the test above to
+// keep the call site brief. Pulled out here so encoding/json doesn't
+// leak into the production catalog_add.go imports.
+var _ = json.Unmarshal
+
+func TestRunCatalogAddWithDeps_NoDetailWriteWhenDetailDirUnset(t *testing.T) {
+	// The default invocation must not touch any path besides --catalog.
+	// In particular, no `skills/` subdirectory should appear next to the
+	// catalog file, since that would be surprising file pollution for
+	// users vendoring into their own workflows.
+	out := &bytes.Buffer{}
+	dir := t.TempDir()
+	catalogPath := filepath.Join(dir, "catalog.json")
+
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: catalogPath,
+		// DetailDir intentionally left empty.
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+
+	// catalog.json should exist.
+	if _, err := os.Stat(catalogPath); err != nil {
+		t.Errorf("catalog.json missing: %v", err)
+	}
+	// No skills/ directory should have been created anywhere under dir.
+	skillsDir := filepath.Join(dir, "skills")
+	if _, err := os.Stat(skillsDir); !os.IsNotExist(err) {
+		t.Errorf("skills/ directory was created without --detail-dir; want it to not exist (stat err=%v)", err)
+	}
+	// Stdout should not announce a detail write.
+	if strings.Contains(out.String(), "wrote detail") {
+		t.Errorf("output announced a detail write without --detail-dir:\n%s", out.String())
+	}
+}
+
+func TestRunCatalogAddWithDeps_SHAInputProducesSyntheticPublishedRow(t *testing.T) {
+	// A SHA-pinned add still produces a `published` row because the
+	// version-derivation chain falls back to a synthetic SemVer with the
+	// commit SHA as build metadata. That keeps the detail file's
+	// "latest_version must be SemVer" contract intact.
+	out := &bytes.Buffer{}
+	catalogPath := tempCatalogPath(t)
+	const commit = "690f15cac7f7b4c055c5ab109c79ed9259934081"
+
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/" + commit + "/skills/algorithmic-art",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: catalogPath,
+	}
+	res := fakeResolver{commit: commit}
+	// The default fake SKILL.md frontmatter sets version: 1.0.0 (top-level).
+	// To exercise the synthetic fallback we need a fixture with no version.
+	fet := fakeFetcher{writeSkillMD: true, skillMDBody: "---\nname: algorithmic-art\nlicense: MIT\n---\nbody\n"}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fet); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+	body, _ := os.ReadFile(catalogPath)
+	c, err := catalog.Load(body)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	got := c.Skills[0]
+	if got.Status != catalog.StatusPublished {
+		t.Errorf("status = %q, want published", got.Status)
+	}
+	wantVersion := "0.0.0+sha." + commit[:8]
+	if got.LatestVersion != wantVersion {
+		t.Errorf("latest_version = %q, want %q (synthetic SHA fallback)", got.LatestVersion, wantVersion)
 	}
 }
 
@@ -220,15 +443,22 @@ func TestRunCatalogAddWithDeps_DuplicateNameRejected(t *testing.T) {
 	catalogPath := tempCatalogPath(t)
 
 	// Pre-populate catalog with an existing entry of the same name.
+	seedTime := time.Date(2026, 5, 23, 0, 0, 0, 0, time.UTC)
 	seed := catalog.Catalog{
-		SchemaVersion: 1,
+		SchemaVersion: 2,
+		GeneratedAt:   seedTime,
 		Skills: []catalog.Entry{{
-			Name:        "create-skill",
-			Repo:        "anthropics/skills",
-			Subpath:     "skills/create-skill",
-			Version:     "v0.9.0",
-			Commit:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			InternalRef: "ghcr.io/liatrio/skills/create-skill",
+			Namespace:     "liatrio",
+			Name:          "create-skill",
+			LatestVersion: "0.9.0",
+			UpdatedAt:     seedTime,
+			Status:        catalog.StatusPublished,
+			Visibility:    catalog.VisibilityPublic,
+			Repo:          "anthropics/skills",
+			Subpath:       "skills/create-skill",
+			Version:       "v0.9.0",
+			Commit:        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			InternalRef:   "ghcr.io/liatrio/skills/create-skill",
 		}},
 	}
 	if err := catalog.WriteCatalogAtomic(catalogPath, seed); err != nil {
@@ -311,6 +541,68 @@ func TestRunCatalogAddWithDeps_OutputMatchesSpecFormat(t *testing.T) {
 		if !strings.Contains(got, line) {
 			t.Errorf("output missing %q\n--- got ---\n%s", line, got)
 		}
+	}
+}
+
+func TestDeriveLatestVersion_PrecedenceChain(t *testing.T) {
+	const commit = "690f15cac7f7b4c055c5ab109c79ed9259934081"
+
+	tests := []struct {
+		name       string
+		versionRef string
+		cfg        skill.SkillConfig
+		want       string
+	}{
+		{
+			name:       "step 1: inbound SemVer with leading v",
+			versionRef: "v1.2.3",
+			cfg:        skill.SkillConfig{Metadata: map[string]any{"version": "9.9.9"}, Version: "8.8.8"},
+			want:       "1.2.3",
+		},
+		{
+			name:       "step 1: inbound SemVer without leading v",
+			versionRef: "1.2.3",
+			cfg:        skill.SkillConfig{Metadata: map[string]any{"version": "9.9.9"}},
+			want:       "1.2.3",
+		},
+		{
+			name:       "step 2: SKILL.md metadata.version",
+			versionRef: commit, // not a SemVer
+			cfg:        skill.SkillConfig{Metadata: map[string]any{"version": "1.1.0"}, Version: "8.8.8"},
+			want:       "1.1.0",
+		},
+		{
+			name:       "step 3: SKILL.md top-level version (no metadata)",
+			versionRef: commit,
+			cfg:        skill.SkillConfig{Version: "v0.5.0"},
+			want:       "0.5.0",
+		},
+		{
+			name:       "step 4: synthetic SHA fallback",
+			versionRef: commit,
+			cfg:        skill.SkillConfig{},
+			want:       "0.0.0+sha." + commit[:8],
+		},
+		{
+			name:       "metadata.version is non-semver, falls through to top-level",
+			versionRef: commit,
+			cfg:        skill.SkillConfig{Metadata: map[string]any{"version": "not-semver"}, Version: "1.0.0"},
+			want:       "1.0.0",
+		},
+		{
+			name:       "metadata.version non-string ignored",
+			versionRef: commit,
+			cfg:        skill.SkillConfig{Metadata: map[string]any{"version": 1.0}, Version: "1.0.0"},
+			want:       "1.0.0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deriveLatestVersion(tt.versionRef, tt.cfg, commit)
+			if got != tt.want {
+				t.Errorf("deriveLatestVersion = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

@@ -199,7 +199,10 @@ func Sync(ctx context.Context, opts Opts, fet Fetcher, lic LicenseReader, push P
 	}
 	priorByName := indexLock(priorLock)
 
-	entries := filterEntries(cat.Skills, opts.Only)
+	// Drop indexer-managed rows (no source-pin fields) before further
+	// processing — sync has nothing to fetch or push for them. Then apply
+	// the optional --only name filter on the remaining vendor rows.
+	entries := filterEntries(filterVendorEntries(cat.Skills), opts.Only)
 	total := len(entries)
 
 	// Pre-seed results so the order matches catalog order regardless of
@@ -347,6 +350,20 @@ func loadLockOrEmpty(path string) (Lock, error) {
 		return Lock{}, fmt.Errorf("reading %s: %w", path, err)
 	}
 	return LoadLock(data)
+}
+
+// filterVendorEntries returns only the entries that carry the full
+// source-pin set. Indexer-managed rows (no source-pin) are silently
+// dropped because there's nothing for sync to fetch or push for them —
+// the artifact they describe already exists in the registry.
+func filterVendorEntries(entries []Entry) []Entry {
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		if HasSourcePin(e) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func filterEntries(entries []Entry, only []string) []Entry {

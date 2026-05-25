@@ -13,7 +13,7 @@ func TestWriteCatalogAtomic_WritesValidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "catalog.json")
 
-	c := Catalog{SchemaVersion: 1, Skills: []Entry{validEntry()}}
+	c := validCatalog()
 	if err := WriteCatalogAtomic(path, c); err != nil {
 		t.Fatalf("WriteCatalogAtomic: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestWriteCatalogAtomic_StableKeyOrderAcrossCalls(t *testing.T) {
 	// `catalog add` and Renovate updates produce minimal diffs.
 	dir := t.TempDir()
 	path := filepath.Join(dir, "catalog.json")
-	c := Catalog{SchemaVersion: 1, Skills: []Entry{validEntry()}}
+	c := validCatalog()
 
 	if err := WriteCatalogAtomic(path, c); err != nil {
 		t.Fatalf("first write: %v", err)
@@ -65,7 +65,7 @@ func TestWriteCatalogAtomic_RejectsInvalidCatalog(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "catalog.json")
 
-	bad := Catalog{SchemaVersion: 1, Skills: []Entry{validEntry()}}
+	bad := validCatalog()
 	bad.Skills[0].Commit = "not-a-sha"
 
 	if err := WriteCatalogAtomic(path, bad); err == nil {
@@ -89,7 +89,7 @@ func TestWriteCatalogAtomic_NoPartialFileOnRenameFailure(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
 	path := filepath.Join(dir, "catalog.json")
-	c := Catalog{SchemaVersion: 1, Skills: []Entry{validEntry()}}
+	c := validCatalog()
 	err := WriteCatalogAtomic(path, c)
 	if err == nil {
 		t.Fatal("expected error writing into read-only dir")
@@ -111,12 +111,13 @@ func TestWriteCatalogAtomic_OverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "catalog.json")
 
-	first := Catalog{SchemaVersion: 1, Skills: []Entry{validEntry()}}
+	first := validCatalog()
 	if err := WriteCatalogAtomic(path, first); err != nil {
 		t.Fatalf("first write: %v", err)
 	}
 
-	second := Catalog{SchemaVersion: 1}
+	second := validCatalog()
+	second.Skills = nil
 	if err := WriteCatalogAtomic(path, second); err != nil {
 		t.Fatalf("second write: %v", err)
 	}
