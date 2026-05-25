@@ -22,6 +22,13 @@ type PushOptions struct {
 	SkillDir  string // path to skill directory
 	PlainHTTP bool   // use HTTP instead of HTTPS (for local registries)
 
+	// ExtraAnnotations are merged into the manifest's annotation map after
+	// the SKILL.md-derived defaults are set. Keys provided here override
+	// the SKILL.md-derived value for the same key, which is the way
+	// catalog sync injects org.opencontainers.image.source pointing at
+	// the immutable upstream commit URL.
+	ExtraAnnotations map[string]string
+
 	// OnStatus is called with status updates during the push workflow.
 	OnStatus func(phase string)
 }
@@ -134,6 +141,12 @@ func Push(ctx context.Context, opts PushOptions) (*PushResult, error) {
 	}
 	if sd.Config.License != "" {
 		annotations["org.opencontainers.image.licenses"] = sd.Config.License
+	}
+	// Caller-provided annotations win — overlay after SKILL.md-derived defaults
+	// so catalog sync can set org.opencontainers.image.source pointing at the
+	// upstream commit URL.
+	for k, v := range opts.ExtraAnnotations {
+		annotations[k] = v
 	}
 
 	// Pack manifest

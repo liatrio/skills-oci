@@ -1,0 +1,7 @@
+resolving anthropics/skills@690f15cac7f7b4c055c5ab109c79ed9259934081
+  → commit 690f15cac7f7b4c055c5ab109c79ed9259934081
+fetching subpath skills/algorithmic-art
+verifying SKILL.md
+  upstream name: algorithmic-art
+  upstream license: Complete terms in LICENSE.txt
+catalog add: appended entry "algorithmic-art" to catalog.json

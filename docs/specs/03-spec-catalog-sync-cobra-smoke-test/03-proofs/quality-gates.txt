@@ -1,0 +1,11 @@
+$ gofmt -l cmd/catalog_sync.go cmd/catalog_sync_test.go cmd/testdata/catalog-sync-plain.golden
+(empty = clean)
+
+$ go vet ./...
+(empty = clean)
+
+$ gofmt -l . (repo-wide)
+cmd/register.go
+pkg/skill/types.go
+pkg/telemetry/transport.go
+Note: cmd/register.go, pkg/skill/types.go, pkg/telemetry/transport.go are PRE-EXISTING drift in main — not introduced by Spec 03.

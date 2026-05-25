@@ -1,0 +1,4 @@
+ok  	github.com/salaboy/skills-oci/cmd	(cached)	coverage: 7.3% of statements
+github.com/salaboy/skills-oci/cmd/catalog_sync.go:68:	runCatalogSync			0.0%
+github.com/salaboy/skills-oci/cmd/catalog_sync.go:97:	parseSyncOpts			100.0%
+github.com/salaboy/skills-oci/cmd/catalog_sync.go:141:	runCatalogSyncWithDeps		100.0%

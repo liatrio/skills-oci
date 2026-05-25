@@ -1,0 +1,8 @@
+catalog sync starting (2 entries)
+[1/2] create-skill cloning @bc6708cb
+[1/2] create-skill pushing
+[1/2] create-skill ok sha256:1
+[2/2] other-skill cloning @d4f8a2e9
+[2/2] other-skill pushing
+[2/2] other-skill ok sha256:2
+catalog sync done: synced=2 skipped=0 failed=0

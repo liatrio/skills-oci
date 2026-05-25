@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "name": "algorithmic-art",
+      "repo": "anthropics/skills",
+      "subpath": "skills/algorithmic-art",
+      "version": "690f15cac7f7b4c055c5ab109c79ed9259934081",
+      "commit": "690f15cac7f7b4c055c5ab109c79ed9259934081",
+      "internal_ref": "ghcr.io/liatrio/skills/algorithmic-art"
+    }
+  ]
+}

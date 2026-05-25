@@ -367,6 +367,22 @@ docker login
 aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
 ```
 
+## Catalog Vendoring (third-party skills)
+
+`skills-oci catalog add` and `skills-oci catalog sync` vendor third-party skills (published as directories inside GitHub repos) into your internal OCI registry. The on-disk contract is `catalog.json` (humans + Renovate write) and `catalog-lock.json` (CI writes). Both files live in a dedicated platform-team repository.
+
+```sh
+# Author: resolve upstream tag → commit SHA, verify SKILL.md, append to catalog.json
+skills-oci catalog add https://github.com/<owner>/<repo>/tree/<tag>/<subpath> --namespace ghcr.io/<org>/skills
+
+# Reconcile: clone every entry at its pinned commit, push to internal registry, update catalog-lock.json
+skills-oci catalog sync --plain
+```
+
+SHA-only commit refs are enforced at validation time — branches, mutable tags, and `HEAD` are rejected. Pushed artifacts carry `org.opencontainers.image.source` pointing at the immutable upstream commit URL and `org.opencontainers.image.licenses` from the upstream `SKILL.md` frontmatter. Renovate Bot is supported via a stock `github-tags` datasource + `pinDigests`; the data contract document publishes the snippet.
+
+See [`docs/skills-catalog-data-contract.md`](docs/skills-catalog-data-contract.md) for the full schema, Renovate config, canonical GitHub Actions workflow, and exit-code semantics.
+
 ## Telemetry
 
 `skills-oci` reports a single `skill.downloaded` event after every

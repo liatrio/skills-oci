@@ -89,6 +89,44 @@ func (e *Emitter) EmitSkillDownloaded(in SkillDownloadedInput) {
 	}()
 }
 
+// EmitCatalogSynced constructs a catalog.synced event from input and ships it
+// asynchronously. Same buffering, timeout, and never-fail semantics as
+// EmitSkillDownloaded.
+func (e *Emitter) EmitCatalogSynced(in CatalogSyncedInput) {
+	if e == nil || !e.cfg.Enabled || e.cfg.Endpoint == "" {
+		return
+	}
+	evt, err := NewCatalogSynced(in)
+	if err != nil {
+		// Producer bug; never fail the user-facing command.
+		return
+	}
+
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+		defer cancel()
+
+		emitErr := e.tx.Emit(ctx, evt)
+		if emitErr != nil {
+			var tr *TransientError
+			if errors.As(emitErr, &tr) && e.buf != nil {
+				if body, err := json.Marshal(evt); err == nil {
+					_ = e.buf.Append(body)
+				}
+			}
+			return
+		}
+
+		if e.buf != nil {
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), httpTimeout)
+			defer drainCancel()
+			_, _ = e.buf.Drain(drainCtx, e.tx.EmitRaw, 0)
+		}
+	}()
+}
+
 // Wait blocks until all in-flight emissions have settled. The root command
 // must call this before returning so a quick subcommand doesn't race with
 // telemetry.
