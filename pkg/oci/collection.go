@@ -11,7 +11,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/salaboy/skills-oci/pkg/skill"
+	"github.com/liatrio/skills-oci/pkg/skill"
 	"oras.land/oras-go/v2/registry/remote"
 )
 

@@ -7,9 +7,9 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/salaboy/skills-oci/pkg/oci"
-	"github.com/salaboy/skills-oci/pkg/tui"
-	"github.com/salaboy/skills-oci/pkg/tui/components"
+	"github.com/liatrio/skills-oci/pkg/oci"
+	"github.com/liatrio/skills-oci/pkg/tui"
+	"github.com/liatrio/skills-oci/pkg/tui/components"
 )
 
 type phase int

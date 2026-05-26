@@ -19,7 +19,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/salaboy/skills-oci/pkg/skill"
+	"github.com/liatrio/skills-oci/pkg/skill"
 )
 
 // recordingEmitter captures every OnSkillDownloaded call.

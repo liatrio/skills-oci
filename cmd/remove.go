@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/salaboy/skills-oci/pkg/skill"
+	"github.com/liatrio/skills-oci/pkg/skill"
 	"github.com/spf13/cobra"
 )
 

@@ -13,8 +13,8 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/salaboy/skills-oci/pkg/oci"
-	"github.com/salaboy/skills-oci/pkg/skill"
+	"github.com/liatrio/skills-oci/pkg/oci"
+	"github.com/liatrio/skills-oci/pkg/skill"
 )
 
 // buildSkillArtifact constructs an in-memory skill artifact (config + layer +

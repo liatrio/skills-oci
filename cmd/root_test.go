@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/salaboy/skills-oci/pkg/telemetry"
+	"github.com/liatrio/skills-oci/pkg/telemetry"
 )
 
 // TestEmitter_WaitTimeoutSemantics proves WaitTimeout returns true when no

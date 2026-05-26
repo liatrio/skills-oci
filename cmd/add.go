@@ -7,9 +7,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/salaboy/skills-oci/pkg/oci"
-	"github.com/salaboy/skills-oci/pkg/skill"
-	"github.com/salaboy/skills-oci/pkg/tui/add"
+	"github.com/liatrio/skills-oci/pkg/oci"
+	"github.com/liatrio/skills-oci/pkg/skill"
+	"github.com/liatrio/skills-oci/pkg/tui/add"
 	"github.com/spf13/cobra"
 )
 

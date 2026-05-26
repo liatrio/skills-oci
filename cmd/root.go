@@ -3,8 +3,8 @@ package cmd
 import (
 	"context"
 
-	"github.com/salaboy/skills-oci/pkg/oci"
-	"github.com/salaboy/skills-oci/pkg/telemetry"
+	"github.com/liatrio/skills-oci/pkg/oci"
+	"github.com/liatrio/skills-oci/pkg/telemetry"
 	"github.com/spf13/cobra"
 )
 

@@ -6,9 +6,9 @@ import (
 	"os/exec"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/salaboy/skills-oci/pkg/oci"
-	"github.com/salaboy/skills-oci/pkg/skill"
-	tuiverify "github.com/salaboy/skills-oci/pkg/tui/verify"
+	"github.com/liatrio/skills-oci/pkg/oci"
+	"github.com/liatrio/skills-oci/pkg/skill"
+	tuiverify "github.com/liatrio/skills-oci/pkg/tui/verify"
 	"github.com/spf13/cobra"
 )
 

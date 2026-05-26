@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/salaboy/skills-oci/pkg/oci"
-	"github.com/salaboy/skills-oci/pkg/tui/load"
+	"github.com/liatrio/skills-oci/pkg/oci"
+	"github.com/liatrio/skills-oci/pkg/tui/load"
 )
 
 // recordingEmitter mirrors the one in pkg/oci/pull_telemetry_test.go but lives

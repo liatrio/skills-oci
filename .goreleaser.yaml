@@ -1,0 +1,82 @@
+version: 2
+
+project_name: skills-oci
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: skills-oci
+    main: ./
+    binary: skills-oci
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      # Telemetry defaults are injected from repo/org variables. Endpoint
+      # is a public URL and the token is a shared anti-abuse value (see
+      # docs/telemetry-data-contract.md "Auth model"). Empty fallbacks
+      # leave stock builds effectively off.
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X github.com/liatrio/skills-oci/pkg/telemetry.DefaultEndpoint={{ .Env.TELEMETRY_ENDPOINT }}
+      - -X github.com/liatrio/skills-oci/pkg/telemetry.DefaultToken={{ .Env.TELEMETRY_TOKEN }}
+
+archives:
+  - id: skills-oci
+    ids: [skills-oci]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# semantic-release already created the GitHub Release and wrote the
+# conventional-commit changelog. GoReleaser only appends artifacts.
+release:
+  mode: append
+  github:
+    owner: liatrio
+    name: skills-oci
+
+changelog:
+  disable: true
+
+homebrew_casks:
+  - name: skills-oci
+    ids: [skills-oci]
+    binaries: [skills-oci]
+    repository:
+      owner: liatrio
+      name: homebrew-taproom
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/liatrio/skills-oci
+    description: CLI for packaging, pushing, and managing AI agent skills as OCI artifacts.
+    commit_author:
+      name: liatrio-bot
+      email: bot@liatr.io
+    commit_msg_template: "chore: bump {{ .ProjectName }} to {{ .Tag }}"
+    # Remove the Gatekeeper quarantine attribute on macOS — releases are
+    # not yet signed/notarized, so without this Finder/Gatekeeper would
+    # block the binary on first launch.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/skills-oci"]
+          end
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
