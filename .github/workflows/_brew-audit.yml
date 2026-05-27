@@ -66,9 +66,12 @@ jobs:
 
       - name: Set up Homebrew
         id: set-up-homebrew
-        # @main per Homebrew/actions deprecation of @master (sync stops
-        # with Homebrew 5.2.0, no earlier than 2026-06-10).
-        uses: Homebrew/actions/setup-homebrew@main
+        # SHA-pinned snapshot of Homebrew/actions main (per the
+        # liatrio/homebrew-taproom tests.yml convention). @master is
+        # deprecated; @main is a moving target — pinning a SHA keeps
+        # this workflow reproducible. Bump alongside the tap when it
+        # bumps.
+        uses: Homebrew/actions/setup-homebrew@6eaeff80e7e5c43087c0e5eb5aa82120399e9c91 # Homebrew/actions main @ 2026-05-27
 
       - name: Cache Homebrew Bundler RubyGems
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
