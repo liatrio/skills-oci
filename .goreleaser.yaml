@@ -54,7 +54,7 @@ release:
 changelog:
   disable: true
 
-brews:
+homebrew_formulas:
   - name: skills-oci
     ids: [skills-oci]
     repository:
