@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/salaboy/skills-oci/cmd"
+	"github.com/liatrio/skills-oci/cmd"
 )
 
 // version is set at build time via -ldflags "-X main.version=<tag>".

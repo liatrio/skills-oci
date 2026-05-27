@@ -1,118 +1,82 @@
 # How to Create a New Release
 
-This guide walks through the steps to create a new release of the `skills-oci` CLI. The release process is automated via GitHub Actions — you only need to push a version tag.
+`skills-oci` releases are fully automated. You do not tag the repo by hand — [semantic-release](https://semantic-release.gitbook.io/) cuts the next version from your conventional commits when they land on `main`. GoReleaser then builds artifacts, attaches them to the GitHub Release, and updates the Homebrew formula in [`liatrio/homebrew-taproom`](https://github.com/liatrio/homebrew-taproom).
 
-## Prerequisites
+## The release flow
 
-- Push access to the `salaboy/skills-oci` repository
-- All changes for the release are merged into `main`
-- CI is passing on `main`
+```
+PR merged to main (conventional commit)
+        │
+        ▼
+  _test.yml            (always)
+        │
+        ▼
+  _semantic-release.yml ── tags + creates GitHub Release with notes
+        │
+   ┌────┴─────────┐
+   ▼              ▼
+_build-push.yml   _goreleaser.yml
+  │                │
+  │                ├── archives + checksums attached to the release
+  │                └── Homebrew formula committed to liatrio/homebrew-taproom
+  ▼
+GHCR image at ghcr.io/liatrio/skills-oci:<version>
+```
 
-## Steps
+All of this is gated on `_test.yml` going green.
 
-### 1. Decide on a version number
+## Cutting a release
 
-Follow [Semantic Versioning](https://semver.org/):
+There is no command to run. To release, merge a PR whose commit message follows [Conventional Commits](https://www.conventionalcommits.org/):
 
-- **Patch** (`v1.0.1`) — bug fixes, no new features
-- **Minor** (`v1.1.0`) — new features, backwards compatible
-- **Major** (`v2.0.0`) — breaking changes
+| Commit type | Bumps |
+|-------------|-------|
+| `fix:` | patch (e.g. `v1.0.0` → `v1.0.1`) |
+| `feat:` | minor (e.g. `v1.0.1` → `v1.1.0`) |
+| `feat!:` or `BREAKING CHANGE:` footer | major (e.g. `v1.1.0` → `v2.0.0`) |
+| `chore:`, `docs:`, `refactor:`, `test:`, `ci:` | no release |
 
-### 2. Make sure main is up to date
+PR titles are validated by `.github/workflows/pr-title.yml`, so a merged PR title that doesn't bump nothing will not produce a release.
+
+If no release-bumping commits have landed since the last tag, `_semantic-release.yml` is a no-op and the `goreleaser` / `build-push` jobs are skipped.
+
+## Verifying a release
+
+After merge, watch the `goreleaser` job in [the Actions tab](https://github.com/liatrio/skills-oci/actions). When it completes:
+
+1. The [Releases page](https://github.com/liatrio/skills-oci/releases) shows the new tag with:
+   - Auto-generated release notes (from semantic-release)
+   - `skills-oci_<version>_{linux,darwin}_{amd64,arm64}.tar.gz`
+   - `skills-oci_<version>_windows_amd64.zip`
+   - `checksums.txt`
+2. [`liatrio/homebrew-taproom`](https://github.com/liatrio/homebrew-taproom) has a new commit on `main` updating `Casks/skills-oci.rb` to the new version + SHA256s.
+3. The image is published to `ghcr.io/liatrio/skills-oci:<version>`.
+
+Smoke-test the brew formula on a Mac:
 
 ```bash
-git checkout main
-git pull origin main
+brew update
+brew upgrade skills-oci    # or `brew install liatrio/taproom/skills-oci` on first install
+skills-oci --version       # should print the new version, not "dev"
 ```
 
-### 3. Verify the build and tests pass locally
+## Manual / backport releases
+
+Sometimes you need to release off a non-`main` branch (e.g. patching an old major). Push a `v*` tag and the same workflows run, skipping semantic-release:
 
 ```bash
-go build ./...
-go test ./...
+git checkout -b release/v1.0.x v1.0.3
+# apply the fix, commit
+git tag v1.0.4
+git push origin release/v1.0.x v1.0.4
 ```
 
-### 4. Create and push a version tag
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-Replace `v1.0.0` with your chosen version number. The tag **must** start with `v` to trigger the release workflow.
-
-### 5. Monitor the release workflow
-
-Open the **Actions** tab in GitHub to watch the workflow run:
-
-```
-https://github.com/salaboy/skills-oci/actions
-```
-
-The workflow will:
-
-1. Check out the code at the tagged commit
-2. Run all tests
-3. Cross-compile binaries for five targets:
-   - `skills-oci-linux-amd64`
-   - `skills-oci-linux-arm64`
-   - `skills-oci-darwin-amd64`
-   - `skills-oci-darwin-arm64`
-   - `skills-oci-windows-amd64.exe`
-4. Generate a `checksums.txt` file with SHA256 hashes
-5. Create a GitHub release with auto-generated release notes and all binaries attached
-
-### 6. Verify the release
-
-Once the workflow completes, check the release page:
-
-```
-https://github.com/salaboy/skills-oci/releases
-```
-
-Confirm that:
-
-- All five binaries and the checksums file are attached
-- The release notes accurately describe the changes since the last release
-- You can download and run one of the binaries:
-
-```bash
-# Example: download and test the macOS arm64 binary
-curl -L -o skills-oci https://github.com/salaboy/skills-oci/releases/download/v1.0.0/skills-oci-darwin-arm64
-chmod +x skills-oci
-./skills-oci --help
-```
-
-### 7. (Optional) Edit the release notes
-
-If the auto-generated notes need adjustments, edit them directly on the GitHub release page. You can add a summary section at the top highlighting the key changes.
+The `goreleaser` workflow falls back to `github.ref_name` for the version when called from a tag push, so binaries and the formula update normally.
 
 ## Troubleshooting
 
-### The workflow didn't trigger
+**Release didn't happen.** Check whether the merged commits actually bump anything (see the table above). `chore:` and `docs:` commits intentionally do not release.
 
-- Make sure the tag starts with `v` (e.g., `v1.0.0`, not `1.0.0`)
-- Check that the tag was pushed to the remote: `git ls-remote --tags origin`
+**`goreleaser` job failed at the `brews` step.** The `HOMEBREW_TAP_TOKEN` secret on `liatrio/skills-oci` is missing, expired, or no longer authorized on `liatrio/homebrew-taproom`. The rest of the release still succeeded — re-running the job after refreshing the secret will only update the tap. See [`publish-to-homebrew.md`](./publish-to-homebrew.md).
 
-### Tests fail during the release
-
-The release workflow runs tests before building. If tests fail:
-
-1. Delete the tag locally and remotely:
-
-   ```bash
-   git tag -d v1.0.0
-   git push origin --delete v1.0.0
-   ```
-
-2. Fix the failing tests on `main`
-3. Re-tag and push once CI is green
-
-### Releasing a hotfix
-
-If you need to patch an older release:
-
-1. Create a branch from the release tag: `git checkout -b release/v1.0.x v1.0.0`
-2. Cherry-pick or apply the fix
-3. Tag the branch: `git tag v1.0.1`
-4. Push the tag: `git push origin v1.0.1`
+**Tests fail.** Fix on `main` and merge another commit; semantic-release will run again on the next push.

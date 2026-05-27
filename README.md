@@ -6,23 +6,39 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 
 ## Installation
 
-### Download a release binary
-
-Release binaries are published on [GitHub Releases](https://github.com/liatrio/skills-oci/releases) along with a `checksums.txt`. The steps below work on macOS and Linux — replace `<ASSET>` with the asset name for your environment.
-
-**1. Pick the asset for your OS and architecture**
-
-| Environment    | `<ASSET>`                  |
-|----------------|-----------------------------|
-| macOS (Apple Silicon) | `skills-oci-darwin-arm64` |
-| macOS (Intel)         | `skills-oci-darwin-amd64` |
-| Linux (x86_64)        | `skills-oci-linux-amd64`  |
-| Linux (arm64)         | `skills-oci-linux-arm64`  |
-
-**2. Download the binary and checksums** (using the [GitHub CLI](https://cli.github.com/))
+### Homebrew (macOS and Linux)
 
 ```bash
-gh release download -R liatrio/skills-oci -p '<ASSET>' -p 'checksums.txt'
+brew install liatrio/taproom/skills-oci
+```
+
+Or tap once and install by short name:
+
+```bash
+brew tap liatrio/taproom
+brew install skills-oci
+```
+
+`brew upgrade skills-oci` picks up new releases automatically.
+
+### Download a release archive
+
+Release archives are published on [GitHub Releases](https://github.com/liatrio/skills-oci/releases) along with a `checksums.txt`. The steps below work on macOS and Linux — replace `<ARCHIVE>` with the asset for your environment.
+
+**1. Pick the archive for your OS and architecture**
+
+| Environment           | `<ARCHIVE>` (substitute `<VERSION>`)                  |
+|-----------------------|--------------------------------------------------------|
+| macOS (Apple Silicon) | `skills-oci_<VERSION>_darwin_arm64.tar.gz`             |
+| macOS (Intel)         | `skills-oci_<VERSION>_darwin_amd64.tar.gz`             |
+| Linux (x86_64)        | `skills-oci_<VERSION>_linux_amd64.tar.gz`              |
+| Linux (arm64)         | `skills-oci_<VERSION>_linux_arm64.tar.gz`              |
+| Windows (x86_64)      | `skills-oci_<VERSION>_windows_amd64.zip`               |
+
+**2. Download the archive and checksums** (using the [GitHub CLI](https://cli.github.com/))
+
+```bash
+gh release download -R liatrio/skills-oci -p '<ARCHIVE>' -p 'checksums.txt'
 ```
 
 **3. Verify the checksum**
@@ -34,11 +50,11 @@ shasum -a 256 -c checksums.txt --ignore-missing   # macOS
 sha256sum -c checksums.txt --ignore-missing       # Linux
 ```
 
-**4. Install to your `PATH`**
+**4. Extract and install to your `PATH`**
 
 ```bash
-chmod +x <ASSET>
-sudo mv <ASSET> /usr/local/bin/skills-oci
+tar -xzf <ARCHIVE>
+sudo mv skills-oci /usr/local/bin/skills-oci
 ```
 
 **5. Confirm it works**
@@ -263,12 +279,11 @@ Project start → Claude Code launches
 **Step 1 — Install skills-oci**
 
 ```bash
-gh release download -R liatrio/skills-oci -p 'skills-oci-darwin-arm64' -p 'checksums.txt'
-shasum -a 256 -c checksums.txt --ignore-missing
-chmod +x skills-oci-darwin-arm64
-sudo mv skills-oci-darwin-arm64 /usr/local/bin/skills-oci
+brew install liatrio/taproom/skills-oci
 skills-oci --help
 ```
+
+See [Installation](#installation) for alternative install methods (release archive, `go install`, source).
 
 **Step 2 — Declare your skills**
 

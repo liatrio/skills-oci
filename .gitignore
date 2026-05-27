@@ -38,3 +38,5 @@ go.work.sum
 # package-lock.json; node_modules/ is fetched fresh by `npm ci` in CI
 # and ignored locally.
 node_modules/
+# GoReleaser
+dist/
