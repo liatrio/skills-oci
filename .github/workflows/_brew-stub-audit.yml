@@ -28,11 +28,19 @@ jobs:
       # Validates .goreleaser.yaml's top-level schema (catches typoed
       # field names like `homebrew_formulas:` where no formula would
       # render at all). Pure config syntax check, ~5s, no builds.
+      #
+      # Pinned to v2.15.0 — the last release before `brews:` got
+      # hard-deprecated in v2.16, which makes `goreleaser check` exit
+      # non-zero on the deprecation alone (config is otherwise valid).
+      # The real fix is migrating to `homebrew_casks:` (issue #8); until
+      # then, this pin lets us keep schema validation without failing
+      # the build on a deprecation we've consciously deferred. Bump in
+      # lockstep with #8.
       - name: GoReleaser check
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.15.0
           args: check
 
       - name: Set up Homebrew
