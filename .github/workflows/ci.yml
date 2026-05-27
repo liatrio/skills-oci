@@ -24,8 +24,16 @@ jobs:
   test:
     uses: ./.github/workflows/_test.yml
 
+  # Render the Homebrew formula goreleaser would publish and run the
+  # tap's audit/style checks against it. Runs on every push/PR so a
+  # broken formula (trailing period in desc, bad license, etc.) is
+  # caught here rather than in the tap PR — at which point the release
+  # has already shipped.
+  brew-audit:
+    uses: ./.github/workflows/_brew-audit.yml
+
   release:
-    needs: test
+    needs: [test, brew-audit]
     # semantic-release runs only on direct pushes to main. Tag pushes
     # (manual / backport) and PRs skip this job; build-and-push handles
     # those paths directly.
@@ -38,14 +46,14 @@ jobs:
     secrets: inherit
 
   build-and-push:
-    needs: [test, release]
+    needs: [test, brew-audit, release]
     # Publish on:
     #   - tag pushes (manual / backport release path)
     #   - main pushes where semantic-release cut a new version
     #   - manual workflow_dispatch (produces a dev image)
-    # PRs only run `test`.
+    # PRs only run `test` + `brew-audit`.
     if: |
-      always() && needs.test.result == 'success' && (
+      always() && needs.test.result == 'success' && needs.brew-audit.result == 'success' && (
         (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
         (needs.release.outputs.released == 'true') ||
         github.event_name == 'workflow_dispatch'
@@ -61,14 +69,14 @@ jobs:
     secrets: inherit
 
   goreleaser:
-    needs: [test, release]
+    needs: [test, brew-audit, release]
     # Publish binaries + Homebrew formula on the same conditions that
     # publish the image, minus workflow_dispatch (dev images are not
     # releases):
     #   - tag pushes (manual / backport)
     #   - main pushes where semantic-release cut a new version
     if: |
-      always() && needs.test.result == 'success' && (
+      always() && needs.test.result == 'success' && needs.brew-audit.result == 'success' && (
         (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
         needs.release.outputs.released == 'true'
       )

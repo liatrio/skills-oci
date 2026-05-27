@@ -69,7 +69,9 @@ homebrew_formulas:
           name: homebrew-taproom
           branch: main
     homepage: https://github.com/liatrio/skills-oci
-    description: CLI for packaging, pushing, and managing AI agent skills as OCI artifacts.
+    # Homebrew's FormulaAudit/Desc rule forbids a trailing period and
+    # caps the length, so keep this short and unpunctuated.
+    description: CLI for packaging, pushing, and managing AI agent skills as OCI artifacts
     license: Apache-2.0
     commit_author:
       name: liatrio-bot
