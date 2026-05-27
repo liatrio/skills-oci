@@ -83,4 +83,8 @@ brews:
       system "#{bin}/skills-oci", "--help"
 
 snapshot:
-  version_template: "{{ .Tag }}-next"
+  # Use .Version (tag with leading `v` stripped) — Homebrew's
+  # FormulaAudit/Version rejects a leading `v`, and the brew-audit job
+  # exercises the snapshot path on every PR. Real releases already use
+  # .Version implicitly.
+  version_template: "{{ .Version }}-next"
