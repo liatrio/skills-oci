@@ -1,15 +1,14 @@
 name: Brew audit (reusable)
 
 # Renders the Homebrew formula GoReleaser would publish to
-# liatrio/homebrew-taproom and runs the same `brew test-bot
-# --only-tap-syntax` step the tap's tests.yml runs on the resulting
-# PR. Catches FormulaAudit/Desc, FormulaAudit/License, etc. *before*
-# we push a broken formula to the tap.
+# liatrio/homebrew-taproom and runs FormulaAudit RuboCop + strict-new
+# audit against it — the same checks that gate the tap's PR. Catches
+# FormulaAudit/Desc, FormulaAudit/License, etc. *before* we push a
+# broken formula to the tap.
 #
 # Patterns borrowed from liatrio/homebrew-taproom/.github/workflows/tests.yml:
 #   - ubuntu + macOS matrix (some audit rules only fire on macOS)
 #   - bundler gems cache keyed on setup-homebrew's gems-hash
-#   - `brew test-bot --only-tap-syntax` (bit-for-bit the tap's check)
 
 on:
   workflow_call:
@@ -86,17 +85,23 @@ jobs:
       # the audit runs in the same shape as production
       # (liatrio/homebrew-taproom).
       - name: Stage formula in local tap
-        id: stage
         run: |
           set -euo pipefail
           tap_dir="$(brew --repository)/Library/Taps/local/homebrew-audit"
           mkdir -p "$tap_dir/Formula"
           cp "${{ steps.formula.outputs.path }}" "$tap_dir/Formula/skills-oci.rb"
-          echo "dir=$tap_dir" >> "$GITHUB_OUTPUT"
 
-      # Identical to the tap's `tests.yml` step — same command, same
-      # checks (brew style + audit + tap-level lint). Anything green
-      # here is green in the tap.
-      - name: brew test-bot --only-tap-syntax
-        working-directory: ${{ steps.stage.outputs.dir }}
-        run: brew test-bot --only-tap-syntax
+      # `brew test-bot --only-tap-syntax` was the original choice for
+      # parity with the tap's tests.yml, but on macOS setup-homebrew
+      # pre-installs homebrew/core, and test-bot (without --tap) audits
+      # whichever tap it finds via git diff — defaulting to homebrew/core
+      # when our local tap has no git history. That had it failing on
+      # unrelated openssl@1.1 style nits in homebrew/core, not on our
+      # formula. Run the same checks (FormulaAudit RuboCop + strict-new
+      # audit) directly against the tap-qualified name, which is
+      # unambiguously scoped to our formula.
+      - name: brew style (FormulaAudit RuboCop checks)
+        run: brew style local/audit/skills-oci
+
+      - name: brew audit --strict --new
+        run: brew audit --strict --new local/audit/skills-oci
