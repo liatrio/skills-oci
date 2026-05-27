@@ -103,5 +103,11 @@ jobs:
       - name: brew style (FormulaAudit RuboCop checks)
         run: brew style local/audit/skills-oci
 
-      - name: brew audit --strict --new
-        run: brew audit --strict --new local/audit/skills-oci
+      # `--new` is intentionally omitted: it includes a network
+      # reachability check on the archive URL, which 404s for a
+      # snapshot formula whose URL references a real tag but with a
+      # `-next`-suffixed filename that doesn't exist. The tap's own
+      # `brew test-bot --only-tap-syntax` doesn't do that check either,
+      # so dropping `--new` here keeps us closer to what the tap runs.
+      - name: brew audit --strict
+        run: brew audit --strict local/audit/skills-oci

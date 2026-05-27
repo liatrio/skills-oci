@@ -80,7 +80,7 @@ brews:
     install: |
       bin.install "skills-oci"
     test: |
-      system "#{bin}/skills-oci", "--help"
+      system bin/"skills-oci", "--help"
 
 snapshot:
   # Use .Version (tag with leading `v` stripped) — Homebrew's
