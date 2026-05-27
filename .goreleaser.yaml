@@ -54,29 +54,31 @@ release:
 changelog:
   disable: true
 
-homebrew_casks:
+brews:
   - name: skills-oci
     ids: [skills-oci]
-    binaries: [skills-oci]
     repository:
       owner: liatrio
       name: homebrew-taproom
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      branch: "skills-oci-{{ .Tag }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: liatrio
+          name: homebrew-taproom
+          branch: main
     homepage: https://github.com/liatrio/skills-oci
     description: CLI for packaging, pushing, and managing AI agent skills as OCI artifacts.
+    license: Apache-2.0
     commit_author:
       name: liatrio-bot
       email: bot@liatr.io
     commit_msg_template: "chore: bump {{ .ProjectName }} to {{ .Tag }}"
-    # Remove the Gatekeeper quarantine attribute on macOS — releases are
-    # not yet signed/notarized, so without this Finder/Gatekeeper would
-    # block the binary on first launch.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/skills-oci"]
-          end
+    install: |
+      bin.install "skills-oci"
+    test: |
+      system "#{bin}/skills-oci", "--help"
 
 snapshot:
   version_template: "{{ .Tag }}-next"

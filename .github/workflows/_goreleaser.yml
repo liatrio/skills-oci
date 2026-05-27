@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
     steps:
@@ -39,6 +40,13 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
 
+      - name: Exchange OIDC for tap installation token
+        id: sts-tap
+        uses: octo-sts/action@f603d3be9d8dd9871a265776e625a27b00effe05 # v1.1.1
+        with:
+          scope: liatrio/homebrew-taproom
+          identity: skills-oci-release
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@9c156ee8a17a598857849441385a2041ef570552 # v6.4.0
         with:
@@ -49,12 +57,30 @@ jobs:
           # Pin the tag explicitly so this works on both tag-push and
           # semantic-release-on-main paths without re-checkout.
           GORELEASER_CURRENT_TAG: ${{ env.VERSION }}
-          # Append assets to the release semantic-release just created
-          # (and update the tap repo).
+          # Append assets to the release semantic-release just created.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Short-lived installation token scoped to the tap repo, minted
+          # via the octo-sts trust policy at
+          # liatrio/homebrew-taproom/.github/chainguard/skills-oci-release.sts.yaml.
+          HOMEBREW_TAP_TOKEN: ${{ steps.sts-tap.outputs.token }}
           # Telemetry defaults baked into the binary via -ldflags. Empty
           # fallbacks keep stock builds effectively off until the
           # collector is stood up. See _goreleaser.yaml.
           TELEMETRY_ENDPOINT: ${{ vars.TELEMETRY_ENDPOINT }}
           TELEMETRY_TOKEN: ${{ vars.TELEMETRY_TOKEN }}
+
+      - name: Enable auto-merge on tap PR
+        env:
+          GH_TOKEN: ${{ steps.sts-tap.outputs.token }}
+        run: |
+          pr_number=$(gh pr list \
+            --repo liatrio/homebrew-taproom \
+            --head "skills-oci-${VERSION}" \
+            --json number --jq '.[0].number')
+          if [ -z "$pr_number" ]; then
+            echo "No PR found for skills-oci-${VERSION}" >&2
+            exit 1
+          fi
+          gh pr merge "$pr_number" \
+            --repo liatrio/homebrew-taproom \
+            --auto --squash
