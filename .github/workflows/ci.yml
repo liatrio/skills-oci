@@ -24,13 +24,15 @@ jobs:
   test:
     uses: ./.github/workflows/_test.yml
 
-  # Render the Homebrew formula goreleaser would publish and run the
-  # tap's audit/style checks against it. Runs on every push/PR so a
-  # broken formula (trailing period in desc, bad license, etc.) is
-  # caught here rather than in the tap PR — at which point the release
-  # has already shipped.
+  # Render a stub Homebrew formula from .goreleaser.yaml's `brews:`
+  # block and run the tap's offline audit/style checks against it.
+  # Runs on every push/PR so a broken formula (trailing period in
+  # desc, bad license, install/test style nits, etc.) is caught here
+  # rather than in the tap PR — at which point the release has
+  # already shipped. Keeps the job name `brew-audit` so downstream
+  # `needs:` references don't change.
   brew-audit:
-    uses: ./.github/workflows/_brew-audit.yml
+    uses: ./.github/workflows/_brew-stub-audit.yml
 
   release:
     needs: [test, brew-audit]

@@ -1,0 +1,73 @@
+name: Brew stub audit (reusable)
+
+# Renders a *stub* Homebrew formula (placeholder URL/sha256/version,
+# real desc/homepage/license/install/test from .goreleaser.yaml's
+# `brews:` block) and runs the same offline checks the tap's PR gate
+# runs — `brew style` (FormulaAudit RuboCop) + `brew audit --strict`.
+# Catches FormulaAudit/Desc, FormulaAudit/License, install/test style
+# nits, etc. before a broken formula reaches the tap.
+#
+# `goreleaser check` covers the one gap a stub-only approach has:
+# top-level YAML schema (e.g. typoed `homebrew_formulas:` vs `brews:`),
+# where no formula renders and there is nothing for the stub to lint.
+#
+# Replaces the snapshot-build audit (built 5 cross-platform binaries
+# just to compute a sha256 we never verified). The stub path runs in
+# ~45s on a single Linux runner.
+
+on:
+  workflow_call:
+
+jobs:
+  brew-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Validates .goreleaser.yaml's top-level schema (catches typoed
+      # field names like `homebrew_formulas:` where no formula would
+      # render at all). Pure config syntax check, ~5s, no builds.
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        # SHA-pinned snapshot of Homebrew/actions main, matching the
+        # liatrio/homebrew-taproom tests.yml pin so the audit
+        # environment is identical to the tap's push gate. Bump
+        # alongside the tap.
+        uses: Homebrew/actions/setup-homebrew@6eaeff80e7e5c43087c0e5eb5aa82120399e9c91 # Homebrew/actions main @ 2026-05-27
+
+      - name: Render stub formula
+        run: ./scripts/render-stub-formula.sh > /tmp/skills-oci.rb
+
+      # Stage the stub inside a real local tap with at least one commit
+      # so test-bot-style heuristics behave even if someone later swaps
+      # the audit command. Also, `brew style`/`brew audit` resolve any
+      # arg containing `/` as a tap-qualified name (`user/repo[/formula]`),
+      # so we *must* invoke with the tap-qualified `local/audit/skills-oci`
+      # name rather than a file path.
+      - name: Stage stub in local tap
+        run: |
+          set -euo pipefail
+          tap_dir="$(brew --repository)/Library/Taps/local/homebrew-audit"
+          mkdir -p "$tap_dir/Formula"
+          cp /tmp/skills-oci.rb "$tap_dir/Formula/skills-oci.rb"
+          git -C "$tap_dir" init -q
+          git -C "$tap_dir" add -A
+          git -C "$tap_dir" -c user.email=ci@local -c user.name=ci commit -qm init
+
+      - name: brew style (FormulaAudit RuboCop checks)
+        run: brew style local/audit/skills-oci
+
+      # `--new` is intentionally omitted — it adds an online URL
+      # reachability check that 404s on the stub's example.com URL.
+      # `--strict` alone is what the tap's `brew test-bot
+      # --only-tap-syntax` effectively runs.
+      - name: brew audit --strict
+        run: brew audit --strict local/audit/skills-oci
