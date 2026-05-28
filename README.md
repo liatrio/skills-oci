@@ -9,59 +9,10 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 ### Homebrew (macOS and Linux)
 
 ```bash
-brew install liatrio/taproom/skills-oci
-```
-
-Or tap once and install by short name:
-
-```bash
-brew tap liatrio/taproom
-brew install skills-oci
+cd ~ && brew install liatrio/taproom/skills-oci && cd -
 ```
 
 `brew upgrade skills-oci` picks up new releases automatically.
-
-### Download a release archive
-
-Release archives are published on [GitHub Releases](https://github.com/liatrio/skills-oci/releases) along with a `checksums.txt`. The steps below work on macOS and Linux — replace `<ARCHIVE>` with the asset for your environment.
-
-**1. Pick the archive for your OS and architecture**
-
-| Environment           | `<ARCHIVE>` (substitute `<VERSION>`)                  |
-|-----------------------|--------------------------------------------------------|
-| macOS (Apple Silicon) | `skills-oci_<VERSION>_darwin_arm64.tar.gz`             |
-| macOS (Intel)         | `skills-oci_<VERSION>_darwin_amd64.tar.gz`             |
-| Linux (x86_64)        | `skills-oci_<VERSION>_linux_amd64.tar.gz`              |
-| Linux (arm64)         | `skills-oci_<VERSION>_linux_arm64.tar.gz`              |
-| Windows (x86_64)      | `skills-oci_<VERSION>_windows_amd64.zip`               |
-
-**2. Download the archive and checksums** (using the [GitHub CLI](https://cli.github.com/))
-
-```bash
-gh release download -R liatrio/skills-oci -p '<ARCHIVE>' -p 'checksums.txt'
-```
-
-**3. Verify the checksum**
-
-Use `shasum -a 256` on macOS or `sha256sum` on Linux:
-
-```bash
-shasum -a 256 -c checksums.txt --ignore-missing   # macOS
-sha256sum -c checksums.txt --ignore-missing       # Linux
-```
-
-**4. Extract and install to your `PATH`**
-
-```bash
-tar -xzf <ARCHIVE>
-sudo mv skills-oci /usr/local/bin/skills-oci
-```
-
-**5. Confirm it works**
-
-```bash
-skills-oci --help
-```
 
 ### Go install
 
@@ -279,11 +230,11 @@ Project start → Claude Code launches
 **Step 1 — Install skills-oci**
 
 ```bash
-brew install liatrio/taproom/skills-oci
+cd ~ && brew install liatrio/taproom/skills-oci && cd -
 skills-oci --help
 ```
 
-See [Installation](#installation) for alternative install methods (release archive, `go install`, source).
+See [Installation](#installation) for alternative install methods (`go install`, source).
 
 **Step 2 — Declare your skills**
 
