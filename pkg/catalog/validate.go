@@ -36,16 +36,20 @@ var semverPattern = regexp.MustCompile(
 		`(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`,
 )
 
-// forbiddenVersions are refs that look like versions but are mutable
-// in practice. Accepting any of them defeats the immutable-ref security
-// property of catalog vendoring.
-var forbiddenVersions = map[string]struct{}{
-	"":       {},
-	"latest": {},
-	"main":   {},
-	"master": {},
-	"HEAD":   {},
-}
+// sourceVersionPattern is the allow-list for the source-pin `version`
+// field. The field accepts SemVer 2.0.0 (with optional leading `v`) or
+// a 40-hex commit SHA — nothing else. Branches, moving major-only tags
+// (`v1`, `v3`), calendar versions, and arbitrary strings are all
+// rejected so every catalog entry pins to an immutable label.
+// The orchestrator overwrites this field with the resolved SHA when
+// the user supplied a branch ref, so branch inputs never reach the
+// validator.
+var sourceVersionPattern = regexp.MustCompile(
+	`^(v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
+		`(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?` +
+		`(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?` +
+		`|[a-f0-9]{40})$`,
+)
 
 // validStatuses is the closed set of values the v2 contract allows on
 // the status field. Mirrors the platform's STATUSES array in
@@ -184,8 +188,8 @@ func validateSourcePin(e Entry) error {
 	if strings.Contains(e.Subpath, "\\") {
 		return fmt.Errorf("subpath: must use forward slashes, got %q", e.Subpath)
 	}
-	if _, forbidden := forbiddenVersions[e.Version]; forbidden {
-		return fmt.Errorf("version: must be an immutable tag, got %q", e.Version)
+	if !sourceVersionPattern.MatchString(e.Version) {
+		return fmt.Errorf("version: must be SemVer 2.0.0 (with optional leading 'v') or a 40-char lowercase hex SHA, got %q", e.Version)
 	}
 	if !commitPattern.MatchString(e.Commit) {
 		return fmt.Errorf("commit: must be a 40-char lowercase hex SHA, got %q", e.Commit)

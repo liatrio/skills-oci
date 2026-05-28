@@ -276,8 +276,32 @@ func TestValidate_Commit(t *testing.T) {
 	}
 }
 
-func TestValidate_Version_RejectsMutableRefs(t *testing.T) {
-	tests := []string{"", "latest", "main", "master", "HEAD"}
+func TestValidate_Version_RejectsNonSemverNonSHA(t *testing.T) {
+	// The `version` field accepts SemVer 2.0.0 (with optional leading `v`)
+	// or a 40-hex SHA — nothing else. Branch names, mutable major-only
+	// tags, calendar versions, and arbitrary strings all fail. This is a
+	// strict allow-list, not a deny-list of known-bad values.
+	tests := []string{
+		"",                // empty
+		"latest",          // moving label
+		"main",            // branch
+		"master",          // branch
+		"HEAD",            // symbolic ref
+		"v1",              // major-only (npm/GitHub Actions style — commonly retagged)
+		"1",               // major-only without v
+		"v1.2",            // major.minor
+		"1.2",             // major.minor without v
+		"garbage",         // arbitrary string
+		"release-2026-01", // dated label
+		"2026.01.15",      // CalVer
+		"v1.2.3.4",        // four-segment
+		"v1.2.3-",         // empty prerelease
+		"v1.0.0+",         // empty build metadata
+		"V1.0.0",          // capital V — SemVer requires lowercase
+		"deadbeef",        // short hex (not 40 chars)
+		"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", // too long
+		"BC6708CBBC37ADB919157F04D31E601E68F4B9C2",         // uppercase hex
+	}
 	for _, v := range tests {
 		t.Run("version="+v, func(t *testing.T) {
 			e := validEntry()
@@ -286,10 +310,41 @@ func TestValidate_Version_RejectsMutableRefs(t *testing.T) {
 			c.Skills = []Entry{e}
 			err := Validate(c)
 			if err == nil {
-				t.Fatalf("Validate accepted forbidden version=%q", v)
+				t.Fatalf("Validate accepted version=%q, want rejection", v)
 			}
 			if !strings.Contains(err.Error(), "version") {
 				t.Errorf("error %q lacks 'version' context", err.Error())
+			}
+		})
+	}
+}
+
+func TestValidate_Version_AcceptsSemverAndSHA(t *testing.T) {
+	// Mirror image of the rejection test: every member of the allow-list
+	// must validate cleanly. Covers the SemVer core, leading-v variants,
+	// prerelease, build metadata, and 40-hex commit SHAs.
+	tests := []string{
+		"1.0.0",
+		"v1.0.0",
+		"0.0.0",
+		"v0.0.1",
+		"10.20.30",
+		"1.0.0-alpha",
+		"v1.0.0-rc.1",
+		"1.0.0-0.3.7",
+		"1.0.0+build.1",
+		"v1.0.0+sha.abc1234",
+		"1.0.0-rc.1+build.5",
+		"bc6708cbbc37adb919157f04d31e601e68f4b9c2",
+	}
+	for _, v := range tests {
+		t.Run("version="+v, func(t *testing.T) {
+			e := validEntry()
+			e.Version = v
+			c := validCatalog()
+			c.Skills = []Entry{e}
+			if err := Validate(c); err != nil {
+				t.Errorf("Validate rejected version=%q: %v", v, err)
 			}
 		})
 	}
