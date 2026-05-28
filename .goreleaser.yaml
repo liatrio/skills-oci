@@ -73,8 +73,6 @@ brews:
     # caps the length, so keep this short and unpunctuated.
     description: CLI for packaging, pushing, and managing AI agent skills as OCI artifacts
     license: Apache-2.0
-    custom_require: compat/download_strategy
-    download_strategy: GitHubPrivateRepositoryReleaseDownloadStrategy
     commit_author:
       name: liatrio-bot
       email: bot@liatr.io
