@@ -128,8 +128,10 @@ func TestValidate_UpdatedAt_RequiresUTC(t *testing.T) {
 
 func TestValidate_GeneratedAt_RequiresUTC(t *testing.T) {
 	c := validCatalog()
-	loc, _ := time.LoadLocation("America/Chicago")
-	c.GeneratedAt = time.Date(2026, 5, 23, 12, 0, 0, 0, loc)
+	// Use a fixed zone (matching TestValidate_UpdatedAt_RequiresUTC) so the
+	// test is hermetic: time.LoadLocation depends on host tzdata and would
+	// make this test environment-sensitive.
+	c.GeneratedAt = time.Date(2026, 5, 23, 12, 0, 0, 0, time.FixedZone("UTC-6", -6*3600))
 	err := Validate(c)
 	if err == nil {
 		t.Fatal("Validate accepted non-UTC generated_at")
