@@ -17,17 +17,21 @@ import (
 	"github.com/liatrio/skills-oci/pkg/skill"
 )
 
-// fakeResolver returns a canned SHA for any tag. Used to avoid network.
+// fakeResolver returns a canned SHA for any ref. Used to avoid network.
+// The zero value reports immutable=true (tag-shaped), matching the
+// default expectation of every existing test. Tests exercising the
+// branch path set mutable=true so ResolveRef reports immutable=false.
 type fakeResolver struct {
-	commit string
-	err    error
+	commit  string
+	mutable bool
+	err     error
 }
 
-func (f fakeResolver) ResolveTag(_ context.Context, _, _ string) (string, error) {
+func (f fakeResolver) ResolveRef(_ context.Context, _, _ string) (string, bool, error) {
 	if f.err != nil {
-		return "", f.err
+		return "", false, f.err
 	}
-	return f.commit, nil
+	return f.commit, !f.mutable, nil
 }
 
 // fakeFetcher writes a SKILL.md (or doesn't) into the expected subpath
@@ -121,6 +125,43 @@ func TestRunCatalogAddWithDeps_HappyPathURL(t *testing.T) {
 		got.Version != "v1.0.0" || got.Commit != "bc6708cbbc37adb919157f04d31e601e68f4b9c2" ||
 		got.InternalRef != "ghcr.io/liatrio/skills/create-skill" {
 		t.Errorf("source-pin fields = %+v", got)
+	}
+}
+
+func TestRunCatalogAddWithDeps_BranchInputRecordsSHAInVersion(t *testing.T) {
+	// When the user passes a branch ref (e.g. `main`), the resolver reports
+	// immutable=false and the orchestrator must overwrite the catalog row's
+	// `version` field with the resolved SHA. This keeps the catalog auditable
+	// — every row pins to a 40-hex SHA in both `version` and `commit`, and
+	// the mutable branch name never lands in the file.
+	out := &bytes.Buffer{}
+	catalogPath := tempCatalogPath(t)
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/main/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: catalogPath,
+	}
+	res := fakeResolver{commit: commit, mutable: true}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+
+	body, _ := os.ReadFile(catalogPath)
+	c, err := catalog.Load(body)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Skills) != 1 {
+		t.Fatalf("len(Skills) = %d, want 1", len(c.Skills))
+	}
+	got := c.Skills[0]
+	if got.Version != commit {
+		t.Errorf("Version = %q, want %q (resolved SHA — branch name must not be persisted)", got.Version, commit)
+	}
+	if got.Commit != commit {
+		t.Errorf("Commit = %q, want %q", got.Commit, commit)
 	}
 }
 

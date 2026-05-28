@@ -55,8 +55,15 @@ type addOpts struct {
 type fetcher interface {
 	Fetch(ctx context.Context, ref scm.SourceRef, dst string) error
 }
+
+// resolver resolves a user-supplied ref (tag, branch, or SHA) to a
+// commit SHA. The immutable bool reports whether the input ref is an
+// immutable label safe to persist in the catalog row's `version` field:
+// true for tags and SHAs, false for branches. The orchestrator overwrites
+// the captured ref string with the SHA when immutable is false so the
+// catalog never carries a mutable branch name.
 type resolver interface {
-	ResolveTag(ctx context.Context, repo, tag string) (string, error)
+	ResolveRef(ctx context.Context, repo, ref string) (sha string, immutable bool, err error)
 }
 
 type realFetcher struct{}
@@ -67,8 +74,8 @@ func (realFetcher) Fetch(ctx context.Context, ref scm.SourceRef, dst string) err
 
 type realResolver struct{}
 
-func (realResolver) ResolveTag(ctx context.Context, repo, tag string) (string, error) {
-	return scm.ResolveTag(ctx, repo, tag)
+func (realResolver) ResolveRef(ctx context.Context, repo, ref string) (string, bool, error) {
+	return scm.ResolveRef(ctx, repo, ref)
 }
 
 func newCatalogAddCmd() *cobra.Command {
@@ -160,13 +167,20 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 		return err
 	}
 
-	// Step 3: resolve tag → commit SHA. Passthrough for 40-hex inputs.
+	// Step 3: resolve ref → commit SHA. Tags, branches, and 40-hex SHAs
+	// are all accepted; branches resolve to the head commit and trigger
+	// the version-swap below so the catalog row records the SHA instead
+	// of the mutable branch name.
 	fmt.Fprintf(out, "resolving %s/%s@%s\n", owner, repo, version)
-	commit, err := res.ResolveTag(ctx, owner+"/"+repo, version)
+	commit, immutable, err := res.ResolveRef(ctx, owner+"/"+repo, version)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "  → commit %s\n", commit)
+	if !immutable {
+		fmt.Fprintf(out, "  note: %q is mutable; recording resolved SHA as version for an immutable catalog row\n", version)
+		version = commit
+	}
 
 	// Step 4: fetch subpath at SHA into temp dir, verify SKILL.md.
 	tmp, err := os.MkdirTemp("", "skills-oci-catalog-add-*")

@@ -94,6 +94,112 @@ func TestResolveTag_EmptyRepoRejects(t *testing.T) {
 	}
 }
 
+func TestResolveRef_LightweightTagReturnsImmutable(t *testing.T) {
+	fixture := newFixtureRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sha, immutable, err := ResolveRef(ctx, fixture.URL, "v1.0.0")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if sha != fixture.V100Commit {
+		t.Errorf("sha = %q, want %q", sha, fixture.V100Commit)
+	}
+	if !immutable {
+		t.Error("immutable = false, want true for tag ref")
+	}
+}
+
+func TestResolveRef_AnnotatedTagPeeledImmutable(t *testing.T) {
+	fixture := newFixtureRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sha, immutable, err := ResolveRef(ctx, fixture.URL, "v2.0.0")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if sha != fixture.V200Commit {
+		t.Errorf("sha = %q, want peeled commit %q", sha, fixture.V200Commit)
+	}
+	if !immutable {
+		t.Error("immutable = false, want true for annotated tag ref")
+	}
+}
+
+func TestResolveRef_FortyHexSHAPassesThroughImmutable(t *testing.T) {
+	const sha = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	got, immutable, err := ResolveRef(ctx, "file:///does/not/exist/should/not/be/touched", sha)
+	if err != nil {
+		t.Fatalf("ResolveRef returned error for SHA passthrough: %v", err)
+	}
+	if got != sha {
+		t.Errorf("sha = %q, want %q", got, sha)
+	}
+	if !immutable {
+		t.Error("immutable = false, want true for SHA passthrough")
+	}
+}
+
+func TestResolveRef_BranchResolvesNotImmutable(t *testing.T) {
+	fixture := newFixtureRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The fixture's default branch is `master`, sitting on V200Commit (the
+	// most recent commit). A branch resolution must return the head SHA
+	// and immutable=false so the orchestrator knows to record the SHA in
+	// the catalog row's `version` field instead of the mutable branch name.
+	sha, immutable, err := ResolveRef(ctx, fixture.URL, "master")
+	if err != nil {
+		t.Fatalf("ResolveRef: %v", err)
+	}
+	if sha != fixture.V200Commit {
+		t.Errorf("sha = %q, want %q (HEAD of master)", sha, fixture.V200Commit)
+	}
+	if immutable {
+		t.Error("immutable = true, want false for branch ref")
+	}
+}
+
+func TestResolveRef_UnknownRefErrors(t *testing.T) {
+	fixture := newFixtureRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, _, err := ResolveRef(ctx, fixture.URL, "no-such-ref-anywhere")
+	if err == nil {
+		t.Fatal("ResolveRef accepted unknown ref, want error")
+	}
+	if !strings.Contains(err.Error(), "no-such-ref-anywhere") {
+		t.Errorf("error %q should mention the missing ref", err.Error())
+	}
+}
+
+func TestResolveRef_EmptyRefRejects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	_, _, err := ResolveRef(ctx, "anthropics/skills", "")
+	if err == nil {
+		t.Fatal("ResolveRef accepted empty ref")
+	}
+}
+
+func TestResolveRef_EmptyRepoRejects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	_, _, err := ResolveRef(ctx, "", "v1.0.0")
+	if err == nil {
+		t.Fatal("ResolveRef accepted empty repo")
+	}
+}
+
 func TestResolveTag_RepoSlugBuildsGitHubURL(t *testing.T) {
 	// When repo is a bare slug (no scheme), ResolveTag should target
 	// github.com. Without network access in tests we can only assert the

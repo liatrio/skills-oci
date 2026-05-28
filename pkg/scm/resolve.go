@@ -26,6 +26,9 @@ var shaPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 // repo may be either a `<owner>/<repo>` slug (which is rewritten to
 // `https://github.com/<owner>/<repo>.git`) or a fully-qualified URL
 // (including `file://` for tests).
+//
+// Branches are not considered by ResolveTag. Use ResolveRef for callers
+// that want to accept branches as well.
 func ResolveTag(ctx context.Context, repo, tag string) (string, error) {
 	if tag == "" {
 		return "", fmt.Errorf("resolving tag: empty tag")
@@ -36,7 +39,55 @@ func ResolveTag(ctx context.Context, repo, tag string) (string, error) {
 	if repo == "" {
 		return "", fmt.Errorf("resolving tag %q: empty repo", tag)
 	}
+	sha, _, err := resolveRefKinds(ctx, repo, tag, refKindTag)
+	if err != nil {
+		return "", err
+	}
+	return sha, nil
+}
 
+// ResolveRef is the branch-tolerant variant of ResolveTag. It accepts a
+// 40-hex SHA, a tag name, or a branch name and returns the commit SHA.
+// The immutable bool reports whether the input ref names an immutable
+// commit: true for SHAs and tags, false for branches. Callers that need
+// to record an audit-stable label (catalog vendoring, for example)
+// should overwrite their captured ref string with the returned SHA when
+// immutable is false.
+//
+// When both a tag and a branch share the same name, the tag wins — this
+// matches Git's own preference for `refs/tags/*` over `refs/heads/*`
+// during ambiguous-ref resolution and keeps existing tag-only callers
+// behaviorally unchanged.
+func ResolveRef(ctx context.Context, repo, ref string) (sha string, immutable bool, err error) {
+	if ref == "" {
+		return "", false, fmt.Errorf("resolving ref: empty ref")
+	}
+	if shaPattern.MatchString(ref) {
+		return ref, true, nil
+	}
+	if repo == "" {
+		return "", false, fmt.Errorf("resolving ref %q: empty repo", ref)
+	}
+	sha, kind, err := resolveRefKinds(ctx, repo, ref, refKindTag|refKindBranch)
+	if err != nil {
+		return "", false, err
+	}
+	return sha, kind == refKindTag, nil
+}
+
+type refKind int
+
+const (
+	refKindTag refKind = 1 << iota
+	refKindBranch
+)
+
+// resolveRefKinds is the shared body of ResolveTag and ResolveRef. It
+// performs the ls-remote and returns the first matching ref kind in the
+// caller's allowed set, preferring tags when both are allowed. SHA
+// passthrough and argument validation are handled by the callers so each
+// public function can keep its own error-message vocabulary.
+func resolveRefKinds(ctx context.Context, repo, ref string, allowed refKind) (string, refKind, error) {
 	remoteURL := repo
 	if !strings.Contains(repo, "://") {
 		remoteURL = "https://github.com/" + strings.TrimSuffix(repo, ".git") + ".git"
@@ -48,27 +99,39 @@ func ResolveTag(ctx context.Context, repo, tag string) (string, error) {
 	})
 	refs, err := remote.ListContext(ctx, &git.ListOptions{PeelingOption: git.AppendPeeled})
 	if err != nil {
-		return "", fmt.Errorf("resolving tag %q on %s: %w", tag, repo, err)
+		return "", 0, fmt.Errorf("resolving ref %q on %s: %w", ref, repo, err)
 	}
 
-	tagRefName := plumbing.NewTagReferenceName(tag)
+	tagRefName := plumbing.NewTagReferenceName(ref)
 	peeledName := plumbing.ReferenceName(string(tagRefName) + "^{}")
+	branchRefName := plumbing.NewBranchReferenceName(ref)
 
-	var rawHash, peeledHash string
+	var tagHash, peeledHash, branchHash string
 	for _, r := range refs {
 		switch r.Name() {
 		case tagRefName:
-			rawHash = r.Hash().String()
+			tagHash = r.Hash().String()
 		case peeledName:
 			peeledHash = r.Hash().String()
+		case branchRefName:
+			branchHash = r.Hash().String()
 		}
 	}
 
-	if peeledHash != "" {
-		return peeledHash, nil
+	if allowed&refKindTag != 0 {
+		if peeledHash != "" {
+			return peeledHash, refKindTag, nil
+		}
+		if tagHash != "" {
+			return tagHash, refKindTag, nil
+		}
 	}
-	if rawHash != "" {
-		return rawHash, nil
+	if allowed&refKindBranch != 0 && branchHash != "" {
+		return branchHash, refKindBranch, nil
 	}
-	return "", fmt.Errorf("tag %q not found on %s", tag, repo)
+
+	if allowed == refKindTag {
+		return "", 0, fmt.Errorf("tag %q not found on %s", ref, repo)
+	}
+	return "", 0, fmt.Errorf("ref %q not found on %s (looked for tag and branch)", ref, repo)
 }
