@@ -12,13 +12,6 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 cd ~ && brew install liatrio/taproom/skills-oci && cd -
 ```
 
-Or tap once and install by short name:
-
-```bash
-brew tap liatrio/taproom
-brew install skills-oci
-```
-
 `brew upgrade skills-oci` picks up new releases automatically.
 
 ### Go install
