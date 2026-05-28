@@ -107,6 +107,7 @@ func newRootCmdWithEmitter(version string) (*cobra.Command, *telemetry.Emitter) 
 	cmd.AddCommand(newInstallCmd())
 	cmd.AddCommand(newVerifyCmd())
 	cmd.AddCommand(newRegisterCmd())
+	cmd.AddCommand(newCatalogCmd())
 	cmd.AddCommand(newCollectionCmd())
 
 	return cmd, emitter
