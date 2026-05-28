@@ -174,6 +174,36 @@ func TestFetch_RejectsEmptySubpath(t *testing.T) {
 	}
 }
 
+func TestFetch_RejectsDotDotSubpath(t *testing.T) {
+	dst := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	cases := []string{
+		"../evil",
+		"a/../../evil",
+		"..",
+		"skills/../../etc",
+	}
+	for _, subpath := range cases {
+		t.Run(subpath, func(t *testing.T) {
+			ref := SourceRef{
+				Owner:   "anthropics",
+				Repo:    "skills",
+				Subpath: subpath,
+				Commit:  "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
+			}
+			err := Fetch(ctx, ref, dst)
+			if err == nil {
+				t.Fatal("Fetch accepted '..' subpath, want error")
+			}
+			if !strings.Contains(err.Error(), "subpath") {
+				t.Errorf("error %q lacks 'subpath' context", err.Error())
+			}
+		})
+	}
+}
+
 func TestFetch_RejectsEmptyDst(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -214,5 +244,19 @@ func TestFetch_ContextCancellationCleansUp(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context") {
 		t.Errorf("error %q should reflect context cancellation", err.Error())
+	}
+
+	// wipeAndWrap must have cleared every partial-work entry from dst so a
+	// retry against the same temp dir is safe.
+	entries, readErr := os.ReadDir(dst)
+	if readErr != nil {
+		t.Fatalf("ReadDir(dst): %v", readErr)
+	}
+	if len(entries) != 0 {
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("dst not cleaned after cancellation; leftover entries: %v", names)
 	}
 }

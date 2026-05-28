@@ -110,6 +110,23 @@ func TestParseGitHubTreeURL_Rejections(t *testing.T) {
 			wantInErr: "tree",
 		},
 		{
+			name:      "missing ref after tree",
+			url:       "https://github.com/anthropics/skills/tree",
+			wantInErr: "ref",
+		},
+		{
+			name:      "missing ref after tree with trailing slash",
+			url:       "https://github.com/anthropics/skills/tree/",
+			wantInErr: "ref",
+		},
+		{
+			// A raw control character (\x00) makes url.Parse itself fail,
+			// genuinely covering the otherwise-unreachable parse-error branch.
+			name:      "control character trips url.Parse",
+			url:       "https://github.com/foo\x00bar/tree/v1.0.0/skill",
+			wantInErr: "parsing tree url",
+		},
+		{
 			name:      "missing subpath (just owner/repo/tree/ref)",
 			url:       "https://github.com/anthropics/skills/tree/v1.0.0",
 			wantInErr: "subpath",

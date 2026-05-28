@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -103,6 +104,13 @@ func validateRef(ref SourceRef) error {
 	}
 	if ref.Subpath == "" {
 		return fmt.Errorf("invalid subpath: empty")
+	}
+	// Reject any `..` segment so filepath.Join(dst, subpath) cannot escape
+	// the temp tree and probe arbitrary filesystem paths via os.Stat.
+	for _, seg := range strings.Split(ref.Subpath, "/") {
+		if seg == ".." {
+			return fmt.Errorf("invalid subpath %q (must not contain '..' segments)", ref.Subpath)
+		}
 	}
 	if !shaPattern.MatchString(ref.Commit) {
 		return fmt.Errorf("invalid commit %q (must be 40-hex lowercase SHA)", ref.Commit)

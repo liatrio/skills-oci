@@ -33,7 +33,7 @@ type FixtureRepo struct {
 // newFixtureRepo builds a temp git repo with a deterministic shape that
 // the resolver and fetcher tests can rely on:
 //
-//   - main branch with three commits
+//   - master branch with three commits (git.PlainInit defaults to master)
 //   - lightweight tag v1.0.0 -> second commit
 //   - annotated tag v2.0.0 -> third commit
 //   - skills/example/SKILL.md exists from the second commit onward
@@ -136,6 +136,91 @@ func newFixtureRepo(t *testing.T) *FixtureRepo {
 		V100Commit:    v100,
 		V200Commit:    v200,
 		V200TagObject: tagRef.Hash().String(),
+	}
+}
+
+// ambiguousFixture is a repo where a tag and a branch share the same name
+// but point at different commits, used to prove the "tag wins" guarantee.
+type ambiguousFixture struct {
+	url        string
+	tagCommit  string // commit the tag refs/tags/shared points at
+	headCommit string // commit the branch refs/heads/shared points at
+}
+
+// newFixtureRepoAmbiguousRef builds a repo with BOTH refs/tags/shared and
+// refs/heads/shared, each on a DIFFERENT commit, so ResolveRef's documented
+// "tag wins over same-named branch" preference can be asserted.
+func newFixtureRepoAmbiguousRef(t *testing.T) ambiguousFixture {
+	t.Helper()
+	dir := t.TempDir()
+
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("PlainInit: %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+
+	commit := func(message, path, content string) string {
+		full := filepath.Join(dir, filepath.FromSlash(path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile %s: %v", full, err)
+		}
+		if _, err := wt.Add(path); err != nil {
+			t.Fatalf("Add %s: %v", path, err)
+		}
+		hash, err := wt.Commit(message, &git.CommitOptions{
+			Author: &object.Signature{
+				Name:  "fixture",
+				Email: "fixture@example.com",
+				When:  time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC),
+			},
+		})
+		if err != nil {
+			t.Fatalf("Commit %q: %v", message, err)
+		}
+		return hash.String()
+	}
+
+	tagCommit := commit("tag target", "tagged.txt", "tagged\n")
+	headCommit := commit("branch target", "branched.txt", "branched\n")
+
+	// Lightweight tag refs/tags/shared -> first commit.
+	tagRef := plumbing.NewHashReference(
+		plumbing.NewTagReferenceName("shared"),
+		plumbing.NewHash(tagCommit),
+	)
+	if err := repo.Storer.SetReference(tagRef); err != nil {
+		t.Fatalf("SetReference tag shared: %v", err)
+	}
+
+	// Branch refs/heads/shared -> second (different) commit.
+	branchRef := plumbing.NewHashReference(
+		plumbing.NewBranchReferenceName("shared"),
+		plumbing.NewHash(headCommit),
+	)
+	if err := repo.Storer.SetReference(branchRef); err != nil {
+		t.Fatalf("SetReference branch shared: %v", err)
+	}
+
+	cfg, err := repo.Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	cfg.Raw.AddOption("uploadpack", "", "allowReachableSHA1InWant", "true")
+	if err := repo.SetConfig(cfg); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	return ambiguousFixture{
+		url:        "file://" + dir,
+		tagCommit:  tagCommit,
+		headCommit: headCommit,
 	}
 }
 
