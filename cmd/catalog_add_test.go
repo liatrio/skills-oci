@@ -294,12 +294,6 @@ func TestRunCatalogAddWithDeps_WritesDetailFileWhenDetailDirSet(t *testing.T) {
 	}
 }
 
-// jsonForDetailTest is a thin helper that unmarshals a JSON file into a
-// SkillDetail, panicking on failure — only used in the test above to
-// keep the call site brief. Pulled out here so encoding/json doesn't
-// leak into the production catalog_add.go imports.
-var _ = json.Unmarshal
-
 func TestRunCatalogAddWithDeps_NoDetailWriteWhenDetailDirUnset(t *testing.T) {
 	// The default invocation must not touch any path besides --catalog.
 	// In particular, no `skills/` subdirectory should appear next to the
@@ -438,7 +432,12 @@ func TestRunCatalogAddWithDeps_RejectsMissingNamespace(t *testing.T) {
 	}
 }
 
-func TestRunCatalogAddWithDeps_SubpathWithoutSKILLMD(t *testing.T) {
+// TestRunCatalogAddWithDeps_FetchErrorsOnMissingSKILLMD covers the step-4
+// path where the fetcher *itself* returns an error (fakeFetcher returns an
+// error when writeSkillMD is false). The distinct case where Fetch succeeds
+// but the subpath has no SKILL.md (step-5 skill.Parse) is covered by
+// TestRunCatalogAddWithDeps_FetchSucceedsButNoSKILLMD.
+func TestRunCatalogAddWithDeps_FetchErrorsOnMissingSKILLMD(t *testing.T) {
 	out := &bytes.Buffer{}
 	catalogPath := tempCatalogPath(t)
 
@@ -449,7 +448,7 @@ func TestRunCatalogAddWithDeps_SubpathWithoutSKILLMD(t *testing.T) {
 	}
 	cfg := configAccessor{}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-	fet := fakeFetcher{writeSkillMD: false} // signals "no SKILL.md"
+	fet := fakeFetcher{writeSkillMD: false} // fetcher returns an error
 
 	err := runCatalogAddWithDeps(context.Background(), out, opts, cfg, res, fet)
 	if err == nil {
@@ -719,6 +718,26 @@ func TestResolveUpstreamInputs_FlagFormValidation(t *testing.T) {
 			o:    addOpts{Repo: "anthropics/", Subpath: "skills/create-skill", Version: "v1.0.0"},
 			want: "repo",
 		},
+		{
+			name: "ssrf: url smuggled as repo",
+			o:    addOpts{Repo: "http://169.254.169.254/latest/meta-data", Subpath: "skills/create-skill", Version: "v1.0.0"},
+			want: "repo",
+		},
+		{
+			name: "ssrf: scheme-only owner segment",
+			o:    addOpts{Repo: "http:/169.254.169.254", Subpath: "skills/create-skill", Version: "v1.0.0"},
+			want: "repo",
+		},
+		{
+			name: "owner with @ host smuggling",
+			o:    addOpts{Repo: "user@evil.com/repo", Subpath: "skills/create-skill", Version: "v1.0.0"},
+			want: "repo",
+		},
+		{
+			name: "repo segment with embedded slash",
+			o:    addOpts{Repo: "owner/repo/extra", Subpath: "skills/create-skill", Version: "v1.0.0"},
+			want: "repo",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -772,4 +791,435 @@ func TestRunCatalogAddWithDeps_FetchFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("runCatalogAddWithDeps swallowed fetch failure")
 	}
+	// The Fetch error must be wrapped with subpath context, not returned raw.
+	if !strings.Contains(err.Error(), "fetching subpath") {
+		t.Errorf("fetch error %q lacks 'fetching subpath' context", err.Error())
+	}
+}
+
+// countingResolver records whether ResolveRef was ever invoked, so tests
+// can assert that input validation rejects bad --repo values *before* any
+// network call (the SSRF guard).
+type countingResolver struct {
+	commit string
+	calls  int
+}
+
+func (r *countingResolver) ResolveRef(_ context.Context, _, _ string) (string, bool, error) {
+	r.calls++
+	return r.commit, true, nil
+}
+
+func TestRunCatalogAddWithDeps_RejectsSSRFRepoBeforeResolve(t *testing.T) {
+	// A --repo value carrying a URL/host must be rejected by the owner/repo
+	// charset allow-list before the resolver is ever called, closing the
+	// SSRF / host-smuggling hole (e.g. the cloud metadata endpoint).
+	bad := []string{
+		"http://169.254.169.254/latest/meta-data",
+		"http:/169.254.169.254",
+		"user@evil.com/repo",
+		"owner/repo/extra",
+	}
+	for _, repo := range bad {
+		t.Run(repo, func(t *testing.T) {
+			out := &bytes.Buffer{}
+			res := &countingResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+			opts := addOpts{
+				Repo:        repo,
+				Subpath:     "skills/create-skill",
+				Version:     "v1.0.0",
+				Namespace:   "ghcr.io/liatrio/skills",
+				CatalogPath: tempCatalogPath(t),
+			}
+			err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+			if err == nil {
+				t.Fatalf("runCatalogAddWithDeps accepted SSRF-prone --repo %q", repo)
+			}
+			if res.calls != 0 {
+				t.Errorf("resolver was called %d times for %q; want 0 (rejected before network)", res.calls, repo)
+			}
+		})
+	}
+}
+
+func TestParseAddOpts_ParsesTimeout(t *testing.T) {
+	cmd := newCatalogAddCmd()
+	if err := cmd.Flags().Set("repo", "anthropics/skills"); err != nil {
+		t.Fatalf("Set repo: %v", err)
+	}
+	if err := cmd.Flags().Set("subpath", "skills/create-skill"); err != nil {
+		t.Fatalf("Set subpath: %v", err)
+	}
+	if err := cmd.Flags().Set("version", "v1.0.0"); err != nil {
+		t.Fatalf("Set version: %v", err)
+	}
+	if err := cmd.Flags().Set("timeout", "90s"); err != nil {
+		t.Fatalf("Set timeout: %v", err)
+	}
+	o, err := parseAddOpts(cmd, nil)
+	if err != nil {
+		t.Fatalf("parseAddOpts: %v", err)
+	}
+	if o.Timeout != 90*time.Second {
+		t.Errorf("Timeout = %v, want 90s", o.Timeout)
+	}
+}
+
+func TestParseAddOpts_TimeoutDefault(t *testing.T) {
+	cmd := newCatalogAddCmd()
+	if err := cmd.Flags().Set("repo", "anthropics/skills"); err != nil {
+		t.Fatalf("Set repo: %v", err)
+	}
+	if err := cmd.Flags().Set("subpath", "skills/create-skill"); err != nil {
+		t.Fatalf("Set subpath: %v", err)
+	}
+	if err := cmd.Flags().Set("version", "v1.0.0"); err != nil {
+		t.Fatalf("Set version: %v", err)
+	}
+	o, err := parseAddOpts(cmd, nil)
+	if err != nil {
+		t.Fatalf("parseAddOpts: %v", err)
+	}
+	if o.Timeout != 60*time.Second {
+		t.Errorf("default Timeout = %v, want 60s", o.Timeout)
+	}
+}
+
+// deadlineResolver reports whether the context it received carried a
+// deadline, so the timeout-plumbing test can assert the orchestrator
+// wrapped the context before the network steps.
+type deadlineResolver struct {
+	commit      string
+	hadDeadline bool
+}
+
+func (r *deadlineResolver) ResolveRef(ctx context.Context, _, _ string) (string, bool, error) {
+	_, r.hadDeadline = ctx.Deadline()
+	return r.commit, true, nil
+}
+
+func TestRunCatalogAddWithDeps_TimeoutAppliesDeadline(t *testing.T) {
+	// A positive Timeout must wrap the network context with a deadline that
+	// reaches the resolver.
+	out := &bytes.Buffer{}
+	res := &deadlineResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: tempCatalogPath(t),
+		Timeout:     30 * time.Second,
+	}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+	if !res.hadDeadline {
+		t.Error("resolver context carried no deadline despite Timeout=30s")
+	}
+}
+
+func TestRunCatalogAddWithDeps_ZeroTimeoutNoDeadline(t *testing.T) {
+	// A non-positive Timeout means "no deadline": the parent context is
+	// passed through untouched.
+	out := &bytes.Buffer{}
+	res := &deadlineResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: tempCatalogPath(t),
+		Timeout:     0,
+	}
+	if err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+	if res.hadDeadline {
+		t.Error("resolver context carried a deadline despite Timeout=0")
+	}
+}
+
+// noSkillMDFetcher succeeds (returns nil from Fetch) and creates the subpath
+// directory but deliberately writes NO SKILL.md, so the orchestrator reaches
+// skill.Parse (step 5) and fails there — distinct from a Fetch-level error.
+type noSkillMDFetcher struct{}
+
+func (noSkillMDFetcher) Fetch(_ context.Context, ref scm.SourceRef, dst string) error {
+	subpathDir := filepath.Join(dst, filepath.FromSlash(ref.Subpath))
+	return os.MkdirAll(subpathDir, 0o755)
+}
+
+func TestRunCatalogAddWithDeps_FetchSucceedsButNoSKILLMD(t *testing.T) {
+	// Fetch succeeds and the subpath exists, but it has no SKILL.md. This
+	// must surface as a skill.Parse error ("reading upstream SKILL.md"),
+	// which is a different failure mode than Fetch returning an error.
+	out := &bytes.Buffer{}
+	catalogPath := tempCatalogPath(t)
+	opts := addOpts{
+		URL:         "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:   "ghcr.io/liatrio/skills",
+		CatalogPath: catalogPath,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	err := runCatalogAddWithDeps(context.Background(), out, opts, configAccessor{}, res, noSkillMDFetcher{})
+	if err == nil {
+		t.Fatal("runCatalogAddWithDeps accepted subpath without SKILL.md")
+	}
+	if !strings.Contains(err.Error(), "reading upstream SKILL.md") {
+		t.Errorf("error %q lacks 'reading upstream SKILL.md' (skill.Parse step-5 path)", err.Error())
+	}
+	if _, statErr := os.Stat(catalogPath); !os.IsNotExist(statErr) {
+		t.Errorf("catalog.json should not exist after failed parse, got %v", statErr)
+	}
+}
+
+func TestExtractV2Namespace(t *testing.T) {
+	tests := []struct {
+		name        string
+		internalRef string
+		want        string
+		wantErr     bool
+	}{
+		{
+			name:        "valid four-segment ref",
+			internalRef: "ghcr.io/liatrio/skills/create-skill",
+			want:        "liatrio",
+		},
+		{
+			name:        "valid two-segment ref",
+			internalRef: "registry/namespace",
+			want:        "namespace",
+		},
+		{
+			name:        "single segment errors",
+			internalRef: "singleword",
+			wantErr:     true,
+		},
+		{
+			name:        "empty second segment errors",
+			internalRef: "registry/",
+			wantErr:     true,
+		},
+		{
+			name:        "empty string errors",
+			internalRef: "",
+			wantErr:     true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractV2Namespace(tt.internalRef)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("extractV2Namespace(%q) = %q, want error", tt.internalRef, got)
+				}
+				// Error must contain the format hint to guide the user.
+				if !strings.Contains(err.Error(), "<registry>/<namespace>/skills/<name>") {
+					t.Errorf("error %q lacks the format hint", err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("extractV2Namespace(%q) unexpected error: %v", tt.internalRef, err)
+			}
+			if got != tt.want {
+				t.Errorf("extractV2Namespace(%q) = %q, want %q", tt.internalRef, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadCatalogFile_ReadErrorWrapped(t *testing.T) {
+	// A path that exists but is not a regular file (a directory) makes
+	// os.ReadFile fail with a non-IsNotExist error, which loadCatalogFile
+	// must wrap with the path for context — not silently treat as absent.
+	dir := t.TempDir() // dir itself is an existing, unreadable-as-file path
+	now := time.Now().UTC()
+	_, err := loadCatalogFile(dir, now)
+	if err == nil {
+		t.Fatal("loadCatalogFile accepted a directory path")
+	}
+	if !strings.Contains(err.Error(), dir) {
+		t.Errorf("read error %q lacks the path %q", err.Error(), dir)
+	}
+}
+
+func TestLoadCatalogFile_MissingFileBootstraps(t *testing.T) {
+	// A missing file must bootstrap a zero-value v2 catalog stamped with now.
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	c, err := loadCatalogFile(filepath.Join(t.TempDir(), "absent.json"), now)
+	if err != nil {
+		t.Fatalf("loadCatalogFile: %v", err)
+	}
+	if c.SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2", c.SchemaVersion)
+	}
+	if !c.GeneratedAt.Equal(now) {
+		t.Errorf("GeneratedAt = %v, want %v", c.GeneratedAt, now)
+	}
+}
+
+func TestBuildSkillDetail(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	entry := catalog.Entry{
+		Namespace:     "liatrio",
+		Name:          "create-skill",
+		LatestVersion: "1.0.0",
+		Visibility:    catalog.VisibilityPublic,
+		Status:        catalog.StatusPublished,
+		Repo:          "anthropics/skills",
+		Subpath:       "skills/create-skill",
+		Version:       "v1.0.0",
+		Commit:        "bc6708cbbc37adb919157f04d31e601e68f4b9c2",
+		InternalRef:   "ghcr.io/liatrio/skills/create-skill:1.0.0",
+	}
+	parsed := &skill.SkillDirectory{Config: skill.SkillConfig{Description: "make skills"}}
+	raw := "---\nname: create-skill\n---\nbody\n"
+
+	d := buildSkillDetail(entry, parsed, raw, now)
+
+	// oci_ref strips the tag (anything from the first ':' or '@').
+	if d.OCIRef != "ghcr.io/liatrio/skills/create-skill" {
+		t.Errorf("OCIRef = %q, want tag stripped", d.OCIRef)
+	}
+	// repo_url points at the upstream tree at the recorded version.
+	wantRepoURL := "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill"
+	if d.RepoURL != wantRepoURL {
+		t.Errorf("RepoURL = %q, want %q", d.RepoURL, wantRepoURL)
+	}
+	if d.SchemaVersion != 2 {
+		t.Errorf("SchemaVersion = %d, want 2", d.SchemaVersion)
+	}
+	if d.Namespace != "liatrio" || d.Name != "create-skill" || d.LatestVersion != "1.0.0" {
+		t.Errorf("identity fields wrong: %+v", d)
+	}
+	if d.Description != "make skills" {
+		t.Errorf("Description = %q, want carried from parsed config", d.Description)
+	}
+	if len(d.Versions) != 1 || d.Versions[0].Body != raw || d.Versions[0].Version != "1.0.0" {
+		t.Errorf("versions assembled wrong: %+v", d.Versions)
+	}
+	if !d.Versions[0].PublishedAt.Equal(now) {
+		t.Errorf("PublishedAt = %v, want %v", d.Versions[0].PublishedAt, now)
+	}
+}
+
+func TestMigrateToV2(t *testing.T) {
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+	t.Run("already-v2 row idempotent", func(t *testing.T) {
+		earlier := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+		in := catalog.Catalog{
+			SchemaVersion: 2,
+			GeneratedAt:   earlier,
+			Skills: []catalog.Entry{{
+				Namespace:     "liatrio",
+				Name:          "create-skill",
+				LatestVersion: "1.0.0",
+				UpdatedAt:     earlier,
+				Status:        catalog.StatusPublished,
+				Visibility:    catalog.VisibilityPublic,
+				Repo:          "anthropics/skills",
+				Subpath:       "skills/create-skill",
+				Version:       "v1.0.0",
+				Commit:        commit,
+				InternalRef:   "ghcr.io/liatrio/skills/create-skill",
+			}},
+		}
+		got := migrateToV2(in, now)
+		// Nothing should change: schema already 2, generated_at already set,
+		// every per-entry field already populated.
+		if !got.GeneratedAt.Equal(earlier) {
+			t.Errorf("GeneratedAt mutated: %v", got.GeneratedAt)
+		}
+		r := got.Skills[0]
+		if r.LatestVersion != "1.0.0" || !r.UpdatedAt.Equal(earlier) ||
+			r.Status != catalog.StatusPublished || r.Visibility != catalog.VisibilityPublic ||
+			r.Namespace != "liatrio" {
+			t.Errorf("idempotent migration mutated row: %+v", r)
+		}
+	})
+
+	t.Run("indexer-managed row without source pin skipped", func(t *testing.T) {
+		in := catalog.Catalog{
+			SchemaVersion: 1, // forces schema bump
+			Skills: []catalog.Entry{{
+				Namespace: "liatrio",
+				Name:      "indexed",
+				// No source-pin fields at all → hasAnySourcePin == false.
+				// Deliberately leave Status/Visibility/UpdatedAt zero to
+				// prove the per-entry migration does NOT fill them.
+			}},
+		}
+		got := migrateToV2(in, now)
+		if got.SchemaVersion != 2 {
+			t.Errorf("SchemaVersion = %d, want 2", got.SchemaVersion)
+		}
+		if !got.GeneratedAt.Equal(now) {
+			t.Errorf("GeneratedAt = %v, want %v", got.GeneratedAt, now)
+		}
+		r := got.Skills[0]
+		if r.Status != "" || r.Visibility != "" || !r.UpdatedAt.IsZero() || r.LatestVersion != "" {
+			t.Errorf("indexer-managed row was filled despite no source pin: %+v", r)
+		}
+	})
+
+	t.Run("source-pin row missing each field gets filled", func(t *testing.T) {
+		in := catalog.Catalog{
+			SchemaVersion: 1,
+			Skills: []catalog.Entry{{
+				Name:        "existing-skill",
+				Repo:        "anthropics/skills",
+				Subpath:     "skills/existing-skill",
+				Version:     "v0.5.0",
+				Commit:      commit,
+				InternalRef: "ghcr.io/liatrio/skills/existing-skill",
+				// Namespace, Status, UpdatedAt, Visibility all zero.
+			}},
+		}
+		got := migrateToV2(in, now)
+		r := got.Skills[0]
+		if r.Namespace != "liatrio" {
+			t.Errorf("Namespace = %q, want liatrio (derived from internal_ref)", r.Namespace)
+		}
+		if r.Status != catalog.StatusPublished {
+			t.Errorf("Status = %q, want published", r.Status)
+		}
+		if r.LatestVersion != "0.5.0" {
+			t.Errorf("LatestVersion = %q, want 0.5.0 (derived from version ref)", r.LatestVersion)
+		}
+		if !r.UpdatedAt.Equal(now) {
+			t.Errorf("UpdatedAt = %v, want %v", r.UpdatedAt, now)
+		}
+		if r.Visibility != catalog.VisibilityPublic {
+			t.Errorf("Visibility = %q, want public", r.Visibility)
+		}
+	})
+
+	t.Run("mixed catalog migrates only source-pin rows", func(t *testing.T) {
+		in := catalog.Catalog{
+			SchemaVersion: 1,
+			Skills: []catalog.Entry{
+				{ // source-pin row, needs migration
+					Name:        "vendored",
+					Repo:        "anthropics/skills",
+					Version:     "v2.0.0",
+					Commit:      commit,
+					InternalRef: "ghcr.io/liatrio/skills/vendored",
+				},
+				{ // indexer-managed row, must be left alone
+					Namespace: "liatrio",
+					Name:      "indexed",
+				},
+			},
+		}
+		got := migrateToV2(in, now)
+		vendored := got.Skills[0]
+		if vendored.Status != catalog.StatusPublished || vendored.Namespace != "liatrio" ||
+			vendored.Visibility != catalog.VisibilityPublic || vendored.UpdatedAt.IsZero() {
+			t.Errorf("source-pin row not fully migrated: %+v", vendored)
+		}
+		indexed := got.Skills[1]
+		if indexed.Status != "" || indexed.Visibility != "" || !indexed.UpdatedAt.IsZero() {
+			t.Errorf("indexer-managed row mutated in mixed catalog: %+v", indexed)
+		}
+	})
 }

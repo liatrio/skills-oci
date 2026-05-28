@@ -28,6 +28,14 @@ var semverTagPattern = regexp.MustCompile(
 		`(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`,
 )
 
+// repoSegmentPattern is the allow-list a single owner or repo path segment
+// must match in the flag-form `--repo <owner>/<repo>` input. It rejects
+// anything outside GitHub's owner/repo charset — crucially `:`, `@`, and
+// `/` — so a value like `http://169.254.169.254/latest/meta-data` cannot be
+// smuggled through as owner/repo and reach the resolver (SSRF / host
+// smuggling). Validated before any network call.
+var repoSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
 // addOpts is the resolved set of inputs for `catalog add`. The Cobra
 // layer parses flags + positional into this struct so the orchestration
 // logic in runCatalogAddWithDeps stays clean and testable.
@@ -47,6 +55,10 @@ type addOpts struct {
 	// a catalog.json mutator with no side effects on other paths.
 	DetailDir string
 	DryRun    bool
+	// Timeout bounds the two network-bound steps (ResolveRef + Fetch).
+	// cmd.Context() has no deadline of its own, so the orchestrator wraps
+	// it with context.WithTimeout(Timeout) around those steps.
+	Timeout time.Duration
 }
 
 // fetcher and resolver are minimal interfaces over the package-level
@@ -100,12 +112,13 @@ func newCatalogAddCmd() *cobra.Command {
 	cmd.Flags().String("repo", "", "Upstream <owner>/<repo> slug (mutually exclusive with positional URL)")
 	cmd.Flags().String("subpath", "", "Path within the upstream repo to the skill directory")
 	cmd.Flags().String("version", "", "Upstream tag, branch, or 40-hex commit SHA (branches are resolved to the head commit and recorded as a SHA)")
-	cmd.Flags().String("name", "", "Local catalog entry name (defaults to last segment of --subpath)")
+	cmd.Flags().String("name", "", "Local catalog entry name (default: last segment of the upstream subpath, whether from the URL or --subpath)")
 	cmd.Flags().String("internal-ref", "", "Destination OCI ref without tag (overrides --namespace derivation)")
 	cmd.Flags().String("namespace", "", "Destination namespace prefix; combined with --name to derive --internal-ref")
 	cmd.Flags().String("catalog", "catalog.json", "Path to catalog.json")
 	cmd.Flags().String("detail-dir", "", "When set, also write a per-skill detail file at <detail-dir>/<namespace>/<name>.json (the shape the skills-platform frontend consumes). Empty (default) means do not touch any path besides --catalog.")
 	cmd.Flags().Bool("dry-run", false, "Print the would-be entry and exit without writing catalog.json")
+	cmd.Flags().Duration("timeout", 60*time.Second, "Maximum time for the network-bound resolve + fetch steps")
 	return cmd
 }
 
@@ -134,6 +147,7 @@ func parseAddOpts(cmd *cobra.Command, args []string) (addOpts, error) {
 	o.CatalogPath, _ = cmd.Flags().GetString("catalog")
 	o.DetailDir, _ = cmd.Flags().GetString("detail-dir")
 	o.DryRun, _ = cmd.Flags().GetBool("dry-run")
+	o.Timeout, _ = cmd.Flags().GetDuration("timeout")
 
 	upstreamFlagsSet := o.Repo != "" || o.Subpath != "" || o.Version != ""
 	if o.URL != "" && upstreamFlagsSet {
@@ -170,12 +184,22 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 		return err
 	}
 
+	// The two network-bound steps (ResolveRef, Fetch) share a deadline so a
+	// hung resolver or fetch cannot block indefinitely. cmd.Context() has no
+	// deadline of its own; a non-positive Timeout means "no deadline".
+	netCtx := ctx
+	if o.Timeout > 0 {
+		var cancel context.CancelFunc
+		netCtx, cancel = context.WithTimeout(ctx, o.Timeout)
+		defer cancel()
+	}
+
 	// Step 3: resolve ref → commit SHA. Tags, branches, and 40-hex SHAs
 	// are all accepted; branches resolve to the head commit and trigger
 	// the version-swap below so the catalog row records the SHA instead
 	// of the mutable branch name.
 	fmt.Fprintf(out, "resolving %s/%s@%s\n", owner, repo, version)
-	commit, immutable, err := res.ResolveRef(ctx, owner+"/"+repo, version)
+	commit, immutable, err := res.ResolveRef(netCtx, owner+"/"+repo, version)
 	if err != nil {
 		return err
 	}
@@ -193,8 +217,8 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 	defer os.RemoveAll(tmp)
 	fmt.Fprintf(out, "fetching subpath %s\n", subpath)
 	ref := scm.SourceRef{Owner: owner, Repo: repo, Subpath: subpath, Commit: commit}
-	if err := fet.Fetch(ctx, ref, tmp); err != nil {
-		return err
+	if err := fet.Fetch(netCtx, ref, tmp); err != nil {
+		return fmt.Errorf("fetching subpath %s: %w", subpath, err)
 	}
 	fmt.Fprintln(out, "verifying SKILL.md")
 
@@ -269,7 +293,10 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 
 	// Step 10: --dry-run short-circuit.
 	if o.DryRun {
-		body, _ := json.MarshalIndent(entry, "", "  ")
+		body, err := json.MarshalIndent(entry, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshalling dry-run entry: %w", err)
+		}
 		fmt.Fprintf(out, "would add entry:\n%s\n", body)
 		return nil
 	}
@@ -416,6 +443,14 @@ func resolveUpstreamInputs(o addOpts) (owner, repo, subpath, version string, err
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", "", "", fmt.Errorf("--repo must be a bare <owner>/<repo> slug, got %q", o.Repo)
 	}
+	// Validate both segments against the owner/repo charset allow-list
+	// before they are recombined and handed to the resolver. This rejects
+	// `:`, `@`, embedded slashes, and other host-smuggling characters so a
+	// value like `http://169.254.169.254/latest/meta-data` cannot reach a
+	// network call (SSRF).
+	if !repoSegmentPattern.MatchString(parts[0]) || !repoSegmentPattern.MatchString(parts[1]) {
+		return "", "", "", "", fmt.Errorf("--repo must be a bare <owner>/<repo> slug matching %s, got %q", repoSegmentPattern.String(), o.Repo)
+	}
 	if o.Subpath == "" {
 		return "", "", "", "", fmt.Errorf("--subpath is required when not using a URL")
 	}
@@ -426,7 +461,7 @@ func resolveUpstreamInputs(o addOpts) (owner, repo, subpath, version string, err
 }
 
 // resolveInternalRef computes the destination OCI ref using the
-// precedence chain documented in docs/skills-catalog-data-contract.md:
+// following precedence chain:
 // --internal-ref > --namespace flag > project config default_namespace
 // > SKILLS_OCI_DEFAULT_NAMESPACE env var > error.
 func resolveInternalRef(o addOpts, cfg interface{ GetDefaultNamespace() string }, name string) (string, error) {
