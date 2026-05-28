@@ -9,7 +9,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for an inter
 ### Homebrew (macOS and Linux)
 
 ```bash
-cd ~ && brew install liatrio/taproom/skills-oci
+cd ~ && brew install liatrio/taproom/skills-oci && cd -
 ```
 
 Or tap once and install by short name:
@@ -237,7 +237,7 @@ Project start → Claude Code launches
 **Step 1 — Install skills-oci**
 
 ```bash
-cd ~ && brew install liatrio/taproom/skills-oci
+cd ~ && brew install liatrio/taproom/skills-oci && cd -
 skills-oci --help
 ```
 
