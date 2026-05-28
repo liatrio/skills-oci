@@ -245,6 +245,38 @@ skills-oci remove --name manage-pull-requests
 
 This removes the skill from `skills.json`, `skills.lock.json`, and deletes the extracted directory.
 
+## Vendoring third-party skills (`catalog add`)
+
+`skills-oci catalog add` records a third-party skill in a `catalog.json` index. It resolves an upstream GitHub reference to an **immutable commit SHA**, verifies that the upstream subpath actually contains a `SKILL.md`, and appends an entry. It never contacts the destination registry.
+
+```bash
+# URL form (tag)
+skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/skill-creator --namespace liatrio
+
+# URL form (branch) — the branch head is resolved and the resulting SHA is recorded as the row's version
+skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator --namespace liatrio
+
+# Flag form
+skills-oci catalog add --repo anthropics/skills --subpath skills/skill-creator --version v1.0.0 --namespace liatrio
+
+# Dry run prints the resolved entry without writing catalog.json
+skills-oci catalog add <URL> --namespace liatrio --dry-run
+```
+
+The destination namespace is resolved by precedence: `--internal-ref` > `--namespace` flag > `catalog.default_namespace` in `.skills-oci.yaml` > `SKILLS_OCI_DEFAULT_NAMESPACE`.
+
+| Flag | Description |
+|------|-------------|
+| `--repo` | Upstream `<owner>/<repo>` slug (flag form; mutually exclusive with the positional URL) |
+| `--subpath` | Path within the upstream repo to the skill directory |
+| `--version` | Upstream tag, branch, or 40-hex commit SHA. Branches are resolved to the head commit and recorded as a SHA; the persisted `version` is allow-listed to **SemVer 2.0.0 (optional leading `v`) or a 40-hex SHA** |
+| `--name` | Local catalog entry name (default: last segment of the upstream subpath) |
+| `--namespace` / `--internal-ref` | Destination namespace / fully-qualified OCI ref |
+| `--catalog` | Path to `catalog.json` (default `catalog.json`) |
+| `--detail-dir` | When set, also write a per-skill detail file at `<detail-dir>/<namespace>/<name>.json` |
+| `--timeout` | Maximum time for the network-bound resolve + fetch steps (default `60s`) |
+| `--dry-run` | Print the would-be entry and exit without writing |
+
 ## Using with Claude Code (Hook Integration)
 
 `skills-oci` can be configured as a Claude Code `SessionStart` hook so that skills are automatically installed every time a Claude Code session starts. This means your project's skills are always present without any manual steps.
