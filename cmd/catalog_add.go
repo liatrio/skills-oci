@@ -83,8 +83,11 @@ func newCatalogAddCmd() *cobra.Command {
 		Use:   "add [URL]",
 		Short: "Add a third-party skill entry to catalog.json",
 		Long:  "Resolves an upstream GitHub URL (or component flags) to an immutable commit SHA, verifies the upstream subpath contains SKILL.md, and appends the entry to catalog.json. Never contacts the destination registry.",
-		Example: `  # URL form
+		Example: `  # URL form (tag)
   skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill
+
+  # URL form (branch) — the resolver looks up the branch's head commit and records that SHA as the catalog row's version
+  skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator
 
   # Flag form
   skills-oci catalog add --repo anthropics/skills --subpath skills/create-skill --version v1.0.0
@@ -96,7 +99,7 @@ func newCatalogAddCmd() *cobra.Command {
 	}
 	cmd.Flags().String("repo", "", "Upstream <owner>/<repo> slug (mutually exclusive with positional URL)")
 	cmd.Flags().String("subpath", "", "Path within the upstream repo to the skill directory")
-	cmd.Flags().String("version", "", "Upstream tag or 40-hex commit SHA")
+	cmd.Flags().String("version", "", "Upstream tag, branch, or 40-hex commit SHA (branches are resolved to the head commit and recorded as a SHA)")
 	cmd.Flags().String("name", "", "Local catalog entry name (defaults to last segment of --subpath)")
 	cmd.Flags().String("internal-ref", "", "Destination OCI ref without tag (overrides --namespace derivation)")
 	cmd.Flags().String("namespace", "", "Destination namespace prefix; combined with --name to derive --internal-ref")
