@@ -87,17 +87,70 @@ future_section:
 	}
 }
 
-func TestLoad_TypeMismatchRejects(t *testing.T) {
-	input := []byte(`
-catalog:
-  concurrency: "four"
-`)
+func TestLoad_NullCatalogSucceeds(t *testing.T) {
+	// `catalog:` present with a null value exercises the validateRaw
+	// !ok branch and must produce a zero-value Config without error.
+	got, err := Load([]byte("catalog: null\n"))
+	if err != nil {
+		t.Fatalf("Load(catalog: null): %v", err)
+	}
+	if got != (Config{}) {
+		t.Errorf("Load(catalog: null) returned non-zero: %+v", got)
+	}
+}
+
+func TestLoad_ScalarCatalogRejects(t *testing.T) {
+	// `catalog: 42` short-circuits validateRaw (not a mapping) but the
+	// typed second pass cannot decode a scalar into CatalogConfig.
+	_, err := Load([]byte("catalog: 42\n"))
+	if err == nil {
+		t.Fatal("Load accepted scalar catalog, want error")
+	}
+}
+
+func TestLoad_SequenceCatalogRejects(t *testing.T) {
+	// A sequence-typed `catalog:` passes the untyped first pass and
+	// short-circuits validateRaw (not a mapping), so the error must come
+	// from the typed second yaml.Unmarshal.
+	input := []byte("catalog:\n  - item1\n  - item2\n")
 	_, err := Load(input)
 	if err == nil {
-		t.Fatal("Load accepted string concurrency, want error")
+		t.Fatal("Load accepted sequence catalog, want error")
 	}
-	if !strings.Contains(err.Error(), "concurrency") {
-		t.Errorf("error %q lacks 'concurrency' context", err.Error())
+}
+
+func TestLoad_TypeMismatchRejects(t *testing.T) {
+	cases := []struct {
+		name      string
+		input     string
+		wantField string
+	}{
+		{
+			name:      "concurrency string",
+			input:     "catalog:\n  concurrency: \"four\"\n",
+			wantField: "concurrency",
+		},
+		{
+			name:      "default_namespace int",
+			input:     "catalog:\n  default_namespace: 123\n",
+			wantField: "default_namespace",
+		},
+		{
+			name:      "allow_missing_license string",
+			input:     "catalog:\n  allow_missing_license: \"yes\"\n",
+			wantField: "allow_missing_license",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load([]byte(tc.input))
+			if err == nil {
+				t.Fatalf("Load accepted %s, want error", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Errorf("error %q lacks %q context", err.Error(), tc.wantField)
+			}
+		})
 	}
 }
 
@@ -133,7 +186,8 @@ func TestLoad_MalformedYAMLRejects(t *testing.T) {
 
 // captureStderr runs fn while capturing anything written to os.Stderr,
 // then returns the captured bytes as a string. Restores os.Stderr on
-// return.
+// return. Callers must not run in parallel — this swaps the global
+// os.Stderr.
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stderr

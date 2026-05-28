@@ -7,8 +7,11 @@ type Config struct {
 }
 
 // CatalogConfig holds the catalog vendoring settings the CLI reads. All
-// fields are optional; zero values mean "fall back to the next layer
-// of the precedence chain" (flag > yaml > env > error or built-in default).
+// fields are optional; zero values mean "fall back to the next layer of
+// the precedence chain". For namespace resolution that chain is, highest
+// first: --internal-ref (which skips namespace/config entirely) > the
+// --namespace flag (which overrides this config but not --internal-ref) >
+// this yaml config > the SKILLS_OCI_DEFAULT_NAMESPACE env var > error.
 type CatalogConfig struct {
 	// DefaultNamespace is the prefix used to derive an entry's
 	// internal_ref when `catalog add` is invoked without --internal-ref.

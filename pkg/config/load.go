@@ -38,11 +38,12 @@ func Load(data []byte) (Config, error) {
 	warnUnknown(raw)
 
 	if err := validateRaw(raw); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("validating .skills-oci.yaml: %w", err)
 	}
 
-	// Second pass: tolerant decode into the typed Config. By this point
-	// we already know the values that matter are well-typed.
+	// Second pass: decode into the typed shape. validateRaw has already
+	// checked known fields when catalog is a mapping; a non-mapping
+	// catalog (e.g. a sequence) still surfaces here as an unmarshal error.
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parsing .skills-oci.yaml: %w", err)
