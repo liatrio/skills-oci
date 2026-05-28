@@ -107,6 +107,38 @@ func TestWriteCatalogAtomic_NoPartialFileOnRenameFailure(t *testing.T) {
 	}
 }
 
+func TestWriteAtomic_RenameFailureCleansUpTempFile(t *testing.T) {
+	// Exercises the os.Rename-failure branch directly: the destination
+	// path is an existing directory, so renaming the temp file onto it
+	// fails. The writer must surface the rename error AND remove the temp
+	// file it created in the (writable) parent dir — no orphan left behind.
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "catalog.json")
+	if err := os.Mkdir(dest, 0o755); err != nil {
+		t.Fatalf("mkdir dest: %v", err)
+	}
+
+	err := writeAtomic(dest, []byte("payload\n"))
+	if err == nil {
+		t.Fatal("expected error renaming temp file onto a directory")
+	}
+	if !strings.Contains(err.Error(), "renaming temp file") {
+		t.Errorf("error %q lacks 'renaming temp file' context", err.Error())
+	}
+
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("ReadDir: %v", readErr)
+	}
+	for _, e := range entries {
+		// Only the dest directory itself should remain; any
+		// catalog.json.tmp.<rand> sibling is a leaked temp file.
+		if strings.HasPrefix(e.Name(), "catalog.json.tmp.") {
+			t.Errorf("stray temp file left behind after rename failure: %s", e.Name())
+		}
+	}
+}
+
 func TestWriteCatalogAtomic_OverwritesExisting(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "catalog.json")

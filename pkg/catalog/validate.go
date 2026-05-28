@@ -188,6 +188,9 @@ func validateSourcePin(e Entry) error {
 	if strings.Contains(e.Subpath, "\\") {
 		return fmt.Errorf("subpath: must use forward slashes, got %q", e.Subpath)
 	}
+	if strings.Contains(e.Subpath, "..") {
+		return fmt.Errorf("subpath: must not contain '..' path segments, got %q", e.Subpath)
+	}
 	if !sourceVersionPattern.MatchString(e.Version) {
 		return fmt.Errorf("version: must be SemVer 2.0.0 (with optional leading 'v') or a 40-char lowercase hex SHA, got %q", e.Version)
 	}

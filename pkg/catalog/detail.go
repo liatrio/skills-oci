@@ -39,12 +39,19 @@ type SkillVersion struct {
 }
 
 // ValidateSkillDetail enforces the wire-format contract that the
-// platform's validate-detail.ts also enforces: identifier regex on
-// namespace/name, SemVer 2.0.0 on latest_version and every entry in
-// versions[], non-empty versions[], latest_version present somewhere in
-// versions[], and a non-empty oci_ref. Producer-side check so we never
-// write a detail file the frontend would later reject.
+// platform's validate-detail.ts also enforces: schema_version 2,
+// identifier regex on namespace/name, SemVer 2.0.0 on latest_version and
+// every entry in versions[], non-empty versions[], latest_version present
+// somewhere in versions[], and a non-empty oci_ref. Producer-side check so
+// we never write a detail file the frontend would later reject.
+//
+// schema_version must be exactly 2. WriteSkillDetailAtomic bootstraps a
+// zero value to 2 before calling this, so callers may leave it unset; any
+// other non-2 value is rejected.
 func ValidateSkillDetail(d SkillDetail) error {
+	if d.SchemaVersion != 2 {
+		return fmt.Errorf("schema_version: want 2, got %d", d.SchemaVersion)
+	}
 	if !identifierPattern.MatchString(d.Namespace) {
 		return fmt.Errorf("namespace: must match %s, got %q", identifierPattern, d.Namespace)
 	}
@@ -89,11 +96,11 @@ func ValidateSkillDetail(d SkillDetail) error {
 // likely doesn't exist on first add), and atomically renames the temp
 // file into place. A failed write leaves no partial file on disk.
 func WriteSkillDetailAtomic(path string, d SkillDetail) error {
-	if err := ValidateSkillDetail(d); err != nil {
-		return fmt.Errorf("writing skill detail: %w", err)
-	}
 	if d.SchemaVersion == 0 {
 		d.SchemaVersion = 2
+	}
+	if err := ValidateSkillDetail(d); err != nil {
+		return fmt.Errorf("writing skill detail: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating skill detail dir: %w", err)

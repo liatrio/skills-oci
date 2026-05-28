@@ -14,7 +14,10 @@ func AddEntry(c Catalog, e Entry) (Catalog, error) {
 		// Bootstrap convenience: AddEntry on a zero-value Catalog produces
 		// a v2 catalog. Callers building from scratch don't have to set
 		// SchemaVersion separately. GeneratedAt is still the caller's
-		// responsibility — Validate will reject a zero GeneratedAt below.
+		// responsibility — a zero GeneratedAt is written as
+		// "0001-01-01T00:00:00Z", which the platform validator accepts (it
+		// checks only the RFC3339 string format) but is not meaningful
+		// production data, so writers should stamp a real time.
 		out.SchemaVersion = 2
 	}
 	if err := Validate(out); err != nil {

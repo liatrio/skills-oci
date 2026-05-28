@@ -10,6 +10,10 @@ import (
 // fields are tolerated so additive schema changes in future minor versions
 // do not break older readers; the contract document is the source of truth
 // for which fields are required.
+//
+// Load does not validate schema_version (or any other field) — it returns
+// whatever version the bytes declare, including unsupported ones. Callers
+// that need contract enforcement must call Validate on the result.
 func Load(data []byte) (Catalog, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return Catalog{}, fmt.Errorf("loading catalog: empty input")

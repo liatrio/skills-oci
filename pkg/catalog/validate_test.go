@@ -112,6 +112,20 @@ func TestValidate_UpdatedAt_RequiresSecondPrecision(t *testing.T) {
 	}
 }
 
+func TestValidate_UpdatedAt_RequiresUTC(t *testing.T) {
+	e := validEntry()
+	e.UpdatedAt = time.Date(2026, 5, 23, 12, 0, 0, 0, time.FixedZone("UTC-5", -5*3600))
+	c := validCatalog()
+	c.Skills = []Entry{e}
+	err := Validate(c)
+	if err == nil {
+		t.Fatal("Validate accepted non-UTC updated_at")
+	}
+	if !strings.Contains(err.Error(), "updated_at") || !strings.Contains(err.Error(), "UTC") {
+		t.Errorf("error %q lacks 'updated_at' and 'UTC' context", err.Error())
+	}
+}
+
 func TestValidate_GeneratedAt_RequiresUTC(t *testing.T) {
 	c := validCatalog()
 	loc, _ := time.LoadLocation("America/Chicago")
@@ -386,6 +400,8 @@ func TestValidate_Subpath(t *testing.T) {
 		{"empty", ""},
 		{"leading slash", "/skills/create-skill"},
 		{"backslash", "skills\\create-skill"},
+		{"interior dotdot", "skills/../other"},
+		{"leading dotdot", "../../root"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
