@@ -204,6 +204,40 @@ func TestFetch_RejectsDotDotSubpath(t *testing.T) {
 	}
 }
 
+func TestFetch_RejectsSymlinkEscape(t *testing.T) {
+	fixture := newFixtureRepoWithSymlinkEscape(t)
+	pointFetchAt(t, fixture.url)
+
+	cases := []struct {
+		name    string
+		subpath string
+	}{
+		{"subpath is symlink to external dir", "linkdir"},
+		{"SKILL.md is symlink to external file", "realdir"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := t.TempDir()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			ref := SourceRef{
+				Owner:   "fixture",
+				Repo:    "fixture",
+				Subpath: tc.subpath,
+				Commit:  fixture.commit,
+			}
+			err := Fetch(ctx, ref, dst)
+			if err == nil {
+				t.Fatal("Fetch accepted symlink escape, want error")
+			}
+			if !strings.Contains(err.Error(), "subpath") {
+				t.Errorf("error %q lacks 'subpath' context", err.Error())
+			}
+		})
+	}
+}
+
 func TestFetch_RejectsEmptyDst(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()

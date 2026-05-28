@@ -84,12 +84,48 @@ func Fetch(ctx context.Context, ref SourceRef, dst string) error {
 	if info, err := os.Stat(subpathDir); err != nil || !info.IsDir() {
 		return wipeAndWrap(dst, fmt.Errorf("fetch: subpath %q not found at commit %s", ref.Subpath, ref.Commit))
 	}
+	// Defense in depth: a malicious upstream repo can ship a symlink whose
+	// target lives outside the checkout. The os.Stat checks above follow
+	// symlinks, so an escaping subpath/SKILL.md would otherwise pass and let
+	// us vendor arbitrary host files. Reject anything that resolves outside
+	// dst. The `..`-segment guard in validateRef covers literal traversal;
+	// this covers symlink traversal.
+	if ok, err := withinRoot(dst, subpathDir); err != nil || !ok {
+		return wipeAndWrap(dst, fmt.Errorf("fetch: subpath %q at commit %s resolves outside the checkout", ref.Subpath, ref.Commit))
+	}
 	skillMD := filepath.Join(subpathDir, "SKILL.md")
 	if _, err := os.Stat(skillMD); err != nil {
 		return wipeAndWrap(dst, fmt.Errorf("fetch: subpath %q at commit %s does not contain SKILL.md", ref.Subpath, ref.Commit))
 	}
+	if ok, err := withinRoot(dst, skillMD); err != nil || !ok {
+		return wipeAndWrap(dst, fmt.Errorf("fetch: subpath %q SKILL.md at commit %s resolves outside the checkout", ref.Subpath, ref.Commit))
+	}
 
 	return nil
+}
+
+// withinRoot reports whether candidate, after fully resolving symlinks,
+// stays inside root (also symlink-resolved). Both paths must exist on
+// disk. root is resolved too because temp dirs are themselves symlinks on
+// some platforms (e.g. macOS /var -> /private/var), so comparing an
+// unresolved root against a resolved candidate would yield false negatives.
+func withinRoot(root, candidate string) (bool, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false, fmt.Errorf("resolve root %q: %w", root, err)
+	}
+	realCand, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return false, fmt.Errorf("resolve %q: %w", candidate, err)
+	}
+	rel, err := filepath.Rel(realRoot, realCand)
+	if err != nil {
+		return false, err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return false, nil
+	}
+	return true, nil
 }
 
 // validateRef enforces the safety properties that the catalog layer

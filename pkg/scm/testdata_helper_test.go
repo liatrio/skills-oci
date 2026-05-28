@@ -224,6 +224,92 @@ func newFixtureRepoAmbiguousRef(t *testing.T) ambiguousFixture {
 	}
 }
 
+// symlinkEscapeFixture is a repo whose checkout contains symlinks whose
+// targets live OUTSIDE the repo root, used to prove Fetch rejects
+// symlink-based escapes that os.Stat would otherwise silently follow.
+type symlinkEscapeFixture struct {
+	url    string
+	commit string
+}
+
+// newFixtureRepoWithSymlinkEscape builds a repo containing:
+//
+//   - linkdir          -> symlink to an external directory that holds a SKILL.md
+//   - realdir/SKILL.md -> symlink to an external file
+//
+// Both external targets exist on disk for the lifetime of the test, so a
+// fetcher that naively follows symlinks (os.Stat) would accept either
+// subpath and vendor content from outside the checkout. The fix must
+// reject both.
+func newFixtureRepoWithSymlinkEscape(t *testing.T) symlinkEscapeFixture {
+	t.Helper()
+	dir := t.TempDir()
+
+	// External targets, deliberately outside the repo root. A SKILL.md in
+	// an external dir makes the "subpath is a symlink" case look valid to a
+	// naive checker; an external file makes the "SKILL.md is a symlink" case
+	// look valid too.
+	outsideDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsideDir, "SKILL.md"),
+		[]byte("---\nname: evil\nversion: 1.0.0\nlicense: Apache-2.0\n---\npwned\n"), 0o644); err != nil {
+		t.Fatalf("write outside SKILL.md: %v", err)
+	}
+	outsideFile := filepath.Join(t.TempDir(), "secret.md")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+
+	repo, err := git.PlainInit(dir, false)
+	if err != nil {
+		t.Fatalf("PlainInit: %v", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("Worktree: %v", err)
+	}
+
+	// linkdir -> external directory.
+	if err := os.Symlink(outsideDir, filepath.Join(dir, "linkdir")); err != nil {
+		t.Fatalf("symlink linkdir: %v", err)
+	}
+	if _, err := wt.Add("linkdir"); err != nil {
+		t.Fatalf("Add linkdir: %v", err)
+	}
+
+	// realdir/SKILL.md -> external file.
+	if err := os.MkdirAll(filepath.Join(dir, "realdir"), 0o755); err != nil {
+		t.Fatalf("MkdirAll realdir: %v", err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(dir, "realdir", "SKILL.md")); err != nil {
+		t.Fatalf("symlink realdir/SKILL.md: %v", err)
+	}
+	if _, err := wt.Add("realdir/SKILL.md"); err != nil {
+		t.Fatalf("Add realdir/SKILL.md: %v", err)
+	}
+
+	hash, err := wt.Commit("seed symlink escapes", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "fixture",
+			Email: "fixture@example.com",
+			When:  time.Date(2026, 5, 22, 12, 0, 0, 0, time.UTC),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	cfg, err := repo.Config()
+	if err != nil {
+		t.Fatalf("Config: %v", err)
+	}
+	cfg.Raw.AddOption("uploadpack", "", "allowReachableSHA1InWant", "true")
+	if err := repo.SetConfig(cfg); err != nil {
+		t.Fatalf("SetConfig: %v", err)
+	}
+
+	return symlinkEscapeFixture{url: "file://" + dir, commit: hash.String()}
+}
+
 // minimalFixture is a smaller helper for tests that only need a directory
 // at a commit, without the multi-tag scaffolding.
 type minimalFixture struct {
