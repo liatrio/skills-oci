@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,16 +17,6 @@ import (
 	"github.com/liatrio/skills-oci/pkg/scm"
 	"github.com/liatrio/skills-oci/pkg/skill"
 	"github.com/spf13/cobra"
-)
-
-// semverTagPattern matches a SemVer 2.0.0 tag with an optional leading
-// `v`. The leading `v` is stripped before persistence so the catalog's
-// latest_version field passes the platform validator (which is strict
-// SemVer per frontend/src/lib/contract/semver.ts).
-var semverTagPattern = regexp.MustCompile(
-	`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
-		`(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?` +
-		`(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`,
 )
 
 // repoSegmentPattern is the allow-list a single owner or repo path segment
@@ -47,14 +38,18 @@ type addOpts struct {
 	Name        string
 	InternalRef string
 	Namespace   string
-	CatalogPath string
-	// DetailDir, when non-empty, opts into writing a per-skill detail
-	// file at <DetailDir>/<namespace>/<name>.json (the shape the
-	// skills-platform frontend's validateSkillDetail expects). Empty
-	// means skip detail writes entirely — `catalog add` is then purely
-	// a catalog.json mutator with no side effects on other paths.
-	DetailDir string
-	DryRun    bool
+	// VendoredPath is the output vendored.json path (default vendored.json).
+	// catalog add is purely a vendored.json mutator: it touches no other file.
+	VendoredPath string
+	// Yes is the non-interactive overwrite override. When an entry already
+	// exists, Yes proceeds without prompting; it is required to overwrite in
+	// any non-interactive context (--plain / no TTY).
+	Yes bool
+	// Plain mirrors the global --plain flag. It marks a non-interactive
+	// (scripting/CI) run: the overwrite prompt must never block such a run, so
+	// an overwrite under --plain requires Yes.
+	Plain  bool
+	DryRun bool
 	// Timeout bounds the two network-bound steps (ResolveRef + Fetch).
 	// cmd.Context() has no deadline of its own, so the orchestrator wraps
 	// it with context.WithTimeout(Timeout) around those steps.
@@ -70,10 +65,10 @@ type fetcher interface {
 
 // resolver resolves a user-supplied ref (tag, branch, or SHA) to a
 // commit SHA. The immutable bool reports whether the input ref is an
-// immutable label safe to persist in the catalog row's `version` field:
+// immutable label safe to persist in the entry's `version` field:
 // true for tags and SHAs, false for branches. The orchestrator overwrites
 // the captured ref string with the SHA when immutable is false so the
-// catalog never carries a mutable branch name.
+// vendored row never carries a mutable branch name.
 type resolver interface {
 	ResolveRef(ctx context.Context, repo, ref string) (sha string, immutable bool, err error)
 }
@@ -93,18 +88,21 @@ func (realResolver) ResolveRef(ctx context.Context, repo, ref string) (string, b
 func newCatalogAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add [URL]",
-		Short: "Add a third-party skill entry to catalog.json",
-		Long:  "Resolves an upstream GitHub URL (or component flags) to an immutable commit SHA, verifies the upstream subpath contains SKILL.md, and appends the entry to catalog.json. Never contacts the destination registry.",
+		Short: "Vendor a third-party skill into vendored.json",
+		Long:  "Resolves an upstream GitHub URL (or component flags) to an immutable commit SHA, verifies the upstream subpath contains SKILL.md, and upserts the source-pin entry into vendored.json. Never contacts the destination registry.",
 		Example: `  # URL form (tag)
   skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill
 
-  # URL form (branch) — the resolver looks up the branch's head commit and records that SHA as the catalog row's version
+  # URL form (branch) — the resolver looks up the branch's head commit and records that SHA as the entry's version
   skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator
 
   # Flag form
   skills-oci catalog add --repo anthropics/skills --subpath skills/create-skill --version v1.0.0
 
-  # Dry run prints the resolved entry without writing catalog.json
+  # Overwrite an existing entry non-interactively (CI / --plain)
+  skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0/skills/create-skill
+
+  # Dry run prints the resolved entry without writing vendored.json
   skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runCatalogAdd,
@@ -112,12 +110,12 @@ func newCatalogAddCmd() *cobra.Command {
 	cmd.Flags().String("repo", "", "Upstream <owner>/<repo> slug (mutually exclusive with positional URL)")
 	cmd.Flags().String("subpath", "", "Path within the upstream repo to the skill directory")
 	cmd.Flags().String("version", "", "Upstream tag, branch, or 40-hex commit SHA (branches are resolved to the head commit and recorded as a SHA)")
-	cmd.Flags().String("name", "", "Local catalog entry name (default: last segment of the upstream subpath, whether from the URL or --subpath)")
+	cmd.Flags().String("name", "", "Local entry name (default: last segment of the upstream subpath, whether from the URL or --subpath)")
 	cmd.Flags().String("internal-ref", "", "Destination OCI ref without tag (overrides --namespace derivation)")
 	cmd.Flags().String("namespace", "", "Destination namespace prefix; combined with --name to derive --internal-ref")
-	cmd.Flags().String("catalog", "catalog.json", "Path to catalog.json")
-	cmd.Flags().String("detail-dir", "", "When set, also write a per-skill detail file at <detail-dir>/<namespace>/<name>.json (the shape the skills-platform frontend consumes). Empty (default) means do not touch any path besides --catalog.")
-	cmd.Flags().Bool("dry-run", false, "Print the would-be entry and exit without writing catalog.json")
+	cmd.Flags().String("vendored", "vendored.json", "Path to vendored.json")
+	cmd.Flags().BoolP("yes", "y", false, "Overwrite an existing entry without prompting (required to overwrite in non-interactive/--plain mode)")
+	cmd.Flags().Bool("dry-run", false, "Print the would-be entry and exit without writing vendored.json")
 	cmd.Flags().Duration("timeout", 60*time.Second, "Maximum time for the network-bound resolve + fetch steps")
 	return cmd
 }
@@ -127,7 +125,7 @@ func runCatalogAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runCatalogAddWithDeps(cmd.Context(), cmd.OutOrStdout(), opts, configFromContextAccessor(cmd.Context()), realResolver{}, realFetcher{})
+	return runCatalogAddWithDeps(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), opts, configFromContextAccessor(cmd.Context()), realResolver{}, realFetcher{})
 }
 
 // parseAddOpts is split out for testability — it has no IO and no
@@ -144,10 +142,13 @@ func parseAddOpts(cmd *cobra.Command, args []string) (addOpts, error) {
 	o.Name, _ = cmd.Flags().GetString("name")
 	o.InternalRef, _ = cmd.Flags().GetString("internal-ref")
 	o.Namespace, _ = cmd.Flags().GetString("namespace")
-	o.CatalogPath, _ = cmd.Flags().GetString("catalog")
-	o.DetailDir, _ = cmd.Flags().GetString("detail-dir")
+	o.VendoredPath, _ = cmd.Flags().GetString("vendored")
+	o.Yes, _ = cmd.Flags().GetBool("yes")
 	o.DryRun, _ = cmd.Flags().GetBool("dry-run")
 	o.Timeout, _ = cmd.Flags().GetDuration("timeout")
+	// --plain is a persistent flag on the root command; tolerate its absence
+	// (e.g. when the subcommand is built standalone in a unit test).
+	o.Plain, _ = cmd.Flags().GetBool("plain")
 
 	upstreamFlagsSet := o.Repo != "" || o.Subpath != "" || o.Version != ""
 	if o.URL != "" && upstreamFlagsSet {
@@ -159,22 +160,22 @@ func parseAddOpts(cmd *cobra.Command, args []string) (addOpts, error) {
 	return o, nil
 }
 
-// runCatalogAddWithDeps is the orchestration layer. It takes the
-// resolver and fetcher as interfaces so tests can swap them out.
-// Steps are ordered cheap-and-decisive first, network-bound second,
-// file write last — any error before the write leaves catalog.json
-// untouched.
-func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg interface {
+// runCatalogAddWithDeps is the orchestration layer. It takes the resolver
+// and fetcher as interfaces, and the prompt's input as an io.Reader, so
+// tests can swap them out without a network or a TTY. Steps are ordered
+// cheap-and-decisive first, network-bound second, file write last — any
+// error before the write leaves vendored.json untouched.
+func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o addOpts, cfg interface {
 	GetDefaultNamespace() string
 }, res resolver, fet fetcher) error {
-	// Step 1: parse URL or use flag form to populate the upstream-side
-	// fields (owner, repo, subpath, version).
+	// Step 1: parse URL or flag form into the upstream-side fields.
 	owner, repo, subpath, version, err := resolveUpstreamInputs(o)
 	if err != nil {
 		return err
 	}
 
-	// Step 2: derive name + internal_ref.
+	// Step 2: derive name + internal_ref + the v2 namespace. None of this
+	// needs the network, so it is available before the overwrite check below.
 	name := o.Name
 	if name == "" {
 		name = path.Base(subpath)
@@ -182,6 +183,32 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 	internalRef, err := resolveInternalRef(o, cfg, name)
 	if err != nil {
 		return err
+	}
+	v2Namespace, err := extractV2Namespace(internalRef)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: load existing vendored.json (empty if absent) and decide whether
+	// this add would overwrite an existing (namespace, name) entry.
+	cur, err := loadVendoredFile(o.VendoredPath)
+	if err != nil {
+		return err
+	}
+	overwrites := vendoredHasEntry(cur, v2Namespace, name)
+
+	// Step 4: overwrite confirmation. Done before the network steps so a
+	// declined overwrite skips the fetch entirely. Dry-run never writes, so it
+	// is exempt from the prompt (it reports the would-be action instead).
+	if overwrites && !o.DryRun {
+		proceed, err := confirmOverwrite(out, in, o, v2Namespace, name)
+		if err != nil {
+			return err
+		}
+		if !proceed {
+			fmt.Fprintln(out, "aborted; vendored.json unchanged")
+			return nil
+		}
 	}
 
 	// The two network-bound steps (ResolveRef, Fetch) share a deadline so a
@@ -194,10 +221,10 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 		defer cancel()
 	}
 
-	// Step 3: resolve ref → commit SHA. Tags, branches, and 40-hex SHAs
-	// are all accepted; branches resolve to the head commit and trigger
-	// the version-swap below so the catalog row records the SHA instead
-	// of the mutable branch name.
+	// Step 5: resolve ref → commit SHA. Tags, branches, and 40-hex SHAs are
+	// all accepted; branches resolve to the head commit and trigger the
+	// version-swap below so the row records the SHA instead of the mutable
+	// branch name.
 	fmt.Fprintf(out, "resolving %s/%s@%s\n", owner, repo, version)
 	commit, immutable, err := res.ResolveRef(netCtx, owner+"/"+repo, version)
 	if err != nil {
@@ -205,11 +232,11 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 	}
 	fmt.Fprintf(out, "  → commit %s\n", commit)
 	if !immutable {
-		fmt.Fprintf(out, "  note: %q is mutable; recording resolved SHA as version for an immutable catalog row\n", version)
+		fmt.Fprintf(out, "  note: %q is mutable; recording resolved SHA as version for an immutable row\n", version)
 		version = commit
 	}
 
-	// Step 4: fetch subpath at SHA into temp dir, verify SKILL.md.
+	// Step 6: fetch subpath at SHA into temp dir, verify SKILL.md.
 	tmp, err := os.MkdirTemp("", "skills-oci-catalog-add-*")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
@@ -222,7 +249,7 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 	}
 	fmt.Fprintln(out, "verifying SKILL.md")
 
-	// Step 5: read upstream SKILL.md frontmatter and surface name/version/license.
+	// Step 7: read upstream SKILL.md frontmatter and surface name/version/license.
 	skillDir := filepath.Join(tmp, filepath.FromSlash(subpath))
 	parsed, err := skill.Parse(skillDir)
 	if err != nil {
@@ -236,197 +263,99 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, o addOpts, cfg in
 		fmt.Fprintf(out, "  upstream license: %s\n", parsed.Config.License)
 	}
 
-	// Step 6: derive the v2 namespace from the resolved internal_ref. The
-	// platform validator requires a single-segment identifier; the
-	// internal_ref format `<registry>/<namespace>/skills/<name>` makes the
-	// second segment the canonical source.
-	v2Namespace, err := extractV2Namespace(internalRef)
-	if err != nil {
-		return err
+	// Step 8: build the vendored entry from the resolved coordinates.
+	entry := catalog.VendoredEntry{
+		Name:        name,
+		Namespace:   v2Namespace,
+		Repo:        owner + "/" + repo,
+		Subpath:     subpath,
+		Version:     version,
+		Commit:      commit,
+		InternalRef: internalRef,
 	}
 
-	// Step 7: derive the v2 latest_version through a precedence chain so
-	// SHA-pinned vendoring still produces a real SemVer and therefore a
-	// published row + writable detail file:
-	//
-	//   1. Inbound ref is itself a SemVer tag (with optional leading `v`)
-	//   2. SKILL.md frontmatter `metadata.version`
-	//   3. SKILL.md frontmatter top-level `version:`
-	//   4. Synthetic `0.0.0+sha.<commit-short>` build-metadata fallback
-	//
-	// Status is always `published` because every step produces a SemVer
-	// the detail file's contract can hold.
-	latestVersion := deriveLatestVersion(version, parsed.Config, commit)
-	status := catalog.StatusPublished
-
-	// Truncate to second precision: the platform validator's isRfc3339Utc
-	// rejects any fractional-second component on timestamps.
-	now := time.Now().UTC().Truncate(time.Second)
-
-	// Step 8: load existing catalog.json (or zero-value if absent).
-	cur, err := loadCatalogFile(o.CatalogPath, now)
-	if err != nil {
-		return err
-	}
-
-	// Step 9: append entry via the pure AddEntry helper.
-	entry := catalog.Entry{
-		Namespace:     v2Namespace,
-		Name:          name,
-		LatestVersion: latestVersion,
-		UpdatedAt:     now,
-		Status:        status,
-		Visibility:    catalog.VisibilityPublic,
-		Repo:          owner + "/" + repo,
-		Subpath:       subpath,
-		Version:       version,
-		Commit:        commit,
-		InternalRef:   internalRef,
-	}
-	next, err := catalog.AddEntry(cur, entry)
-	if err != nil {
-		return err
-	}
-	// Re-stamp generated_at to reflect the moment of write, matching the
-	// platform indexer's behavior.
-	next.GeneratedAt = now
-
-	// Step 10: --dry-run short-circuit.
+	// Step 9: --dry-run short-circuit — print the resolved entry and the
+	// would-be action, write nothing.
 	if o.DryRun {
+		action := "add"
+		if overwrites {
+			action = "overwrite"
+		}
 		body, err := json.MarshalIndent(entry, "", "  ")
 		if err != nil {
 			return fmt.Errorf("marshalling dry-run entry: %w", err)
 		}
-		fmt.Fprintf(out, "would add entry:\n%s\n", body)
+		fmt.Fprintf(out, "would %s entry:\n%s\n", action, body)
 		return nil
 	}
 
-	// Step 11: atomic write of the catalog row.
-	if err := catalog.WriteCatalogAtomic(o.CatalogPath, next); err != nil {
+	// Step 10: upsert + atomic write.
+	next, _ := catalog.UpsertVendored(cur, entry)
+	if err := catalog.WriteVendoredAtomic(o.VendoredPath, next); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "catalog add: appended entry %q to %s\n", name, o.CatalogPath)
-
-	// Step 12: opt-in per-skill detail file. When --detail-dir is unset
-	// catalog add is purely a catalog.json mutator with no side effects
-	// on other paths — important for non-platform users vendoring third-
-	// party skills into their own workflows. When --detail-dir is set
-	// (typically `core/data/skills` against the skills-platform repo)
-	// write <detail-dir>/<namespace>/<name>.json in the shape the
-	// platform frontend's validateSkillDetail expects.
-	//
-	// We read the SKILL.md bytes directly off the fetched subpath so the
-	// `body` field is byte-identical to upstream (pkg/skill.Parse drops
-	// the raw frontmatter bytes; reconstructing from parsed fields would
-	// lose `metadata:` and any other YAML the parser didn't surface as a
-	// dedicated field).
-	if o.DetailDir == "" {
-		return nil
-	}
-	skillMDBytes, err := os.ReadFile(filepath.Join(skillDir, "SKILL.md"))
-	if err != nil {
-		return fmt.Errorf("reading SKILL.md for detail body: %w", err)
-	}
-	detailPath := filepath.Join(o.DetailDir, v2Namespace, name+".json")
-	detail := buildSkillDetail(entry, parsed, string(skillMDBytes), now)
-	if err := catalog.WriteSkillDetailAtomic(detailPath, detail); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "catalog add: wrote detail %q to %s\n", name, detailPath)
+	fmt.Fprintf(out, "catalog add: wrote entry %q to %s\n", name, o.VendoredPath)
 	return nil
 }
 
-// buildSkillDetail assembles the per-skill detail wire shape from the
-// new catalog entry plus the parsed upstream SKILL.md. `oci_ref` is the
-// internal_ref with any tag stripped (the detail contract carries the
-// untagged ref); `repo_url` points at the exact tree the SKILL.md came
-// from so reviewers can verify the vendored content. `body` is the
-// verbatim upstream SKILL.md bytes (passed in by the caller so the
-// frontmatter is preserved byte-for-byte, including fields the parsed
-// SkillConfig doesn't surface like `metadata.*`).
-func buildSkillDetail(e catalog.Entry, parsed *skill.SkillDirectory, rawSkillMD string, now time.Time) catalog.SkillDetail {
-	ociRef := e.InternalRef
-	if idx := strings.IndexAny(ociRef, ":@"); idx != -1 {
-		ociRef = ociRef[:idx]
+// confirmOverwrite implements the overwrite-confirmation UX. It returns
+// (proceed, error). Non-interactive contexts (--plain, or the --yes
+// override) never prompt: --yes proceeds, --plain without --yes is a
+// non-zero error naming the conflict. Otherwise it prints the prompt and
+// reads a single line from in, proceeding only on an explicit y/yes.
+func confirmOverwrite(out io.Writer, in io.Reader, o addOpts, namespace, name string) (bool, error) {
+	if o.Yes {
+		return true, nil
 	}
-	// Use the original upstream ref (tag or SHA) the user vendored at,
-	// not the resolved commit. When a tag was provided this keeps the
-	// repo_url human-readable and stable; when a SHA was provided this
-	// is a no-op because e.Version == e.Commit in that case.
-	repoURL := fmt.Sprintf("https://github.com/%s/tree/%s/%s", e.Repo, e.Version, e.Subpath)
-	return catalog.SkillDetail{
-		SchemaVersion: 2,
-		Namespace:     e.Namespace,
-		Name:          e.Name,
-		LatestVersion: e.LatestVersion,
-		Visibility:    e.Visibility,
-		Status:        e.Status,
-		Description:   parsed.Config.Description,
-		RepoURL:       repoURL,
-		OCIRef:        ociRef,
-		Versions: []catalog.SkillVersion{{
-			Version:     e.LatestVersion,
-			PublishedAt: now,
-			Body:        rawSkillMD,
-		}},
+	if o.Plain {
+		return false, fmt.Errorf("entry %s/%s already exists in vendored.json; pass -y/--yes to overwrite in non-interactive mode", namespace, name)
 	}
+	fmt.Fprintf(out, "entry %s/%s already exists in vendored.json; overwrite? [y/N] ", namespace, name)
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	ans := strings.ToLower(strings.TrimSpace(line))
+	return ans == "y" || ans == "yes", nil
+}
+
+// loadVendoredFile reads vendored.json from path. A missing file bootstraps an
+// empty Vendored{SchemaVersion: 1} so the first add in a repo works; any other
+// read or parse error is wrapped with the path for context.
+func loadVendoredFile(path string) (catalog.Vendored, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return catalog.Vendored{SchemaVersion: 1}, nil
+		}
+		return catalog.Vendored{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+	v, err := catalog.LoadVendored(data)
+	if err != nil {
+		return catalog.Vendored{}, err
+	}
+	return v, nil
+}
+
+// vendoredHasEntry reports whether v already contains an entry keyed by
+// (namespace, name) — the same identity UpsertVendored uses.
+func vendoredHasEntry(v catalog.Vendored, namespace, name string) bool {
+	for _, e := range v.Skills {
+		if e.Namespace == namespace && e.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // extractV2Namespace pulls the single-segment v2 namespace out of an
 // internal_ref of the form `<registry>/<namespace>/skills/<name>` (the
 // `skills-oci` convention). The registry host is always the first
 // segment, the v2 namespace is always the second. Errors when the ref
-// has fewer than two path segments — the platform validator would reject
-// such a value anyway, so failing early gives a better error.
+// has fewer than two path segments.
 func extractV2Namespace(internalRef string) (string, error) {
 	parts := strings.Split(internalRef, "/")
 	if len(parts) < 2 || parts[1] == "" {
 		return "", fmt.Errorf("cannot derive v2 namespace from internal_ref %q (expected <registry>/<namespace>/skills/<name>)", internalRef)
 	}
 	return parts[1], nil
-}
-
-// deriveLatestVersion walks the precedence chain documented in step 7
-// of runCatalogAddWithDeps and returns the best SemVer label for this
-// vendor row. Always returns a non-empty SemVer 2.0.0 string; the
-// synthetic build-metadata fallback at the bottom is the contract that
-// makes "status: published" honest for SHA-only inputs.
-func deriveLatestVersion(versionRef string, cfg skill.SkillConfig, commit string) string {
-	// 1. The inbound ref is itself a SemVer (strip optional leading `v`).
-	if isSemverTag(versionRef) {
-		return strings.TrimPrefix(versionRef, "v")
-	}
-	// 2. SKILL.md frontmatter `metadata.version` — the convention the
-	//    platform's own publish-skill workflow stamps into liatrio skills.
-	if v, ok := cfg.Metadata["version"].(string); ok && isSemverTag(v) {
-		return strings.TrimPrefix(v, "v")
-	}
-	// 3. SKILL.md frontmatter top-level `version:` — legacy / non-spec
-	//    but present in some skills.
-	if isSemverTag(cfg.Version) {
-		return strings.TrimPrefix(cfg.Version, "v")
-	}
-	// 4. Synthetic build-metadata SemVer. Build metadata after `+` does
-	//    not affect SemVer precedence (per §10), but the string is valid,
-	//    the detail-file contract accepts it, and the commit-short label
-	//    is informative.
-	return "0.0.0+sha." + shortSHA(commit)
-}
-
-// isSemverTag reports whether s is a SemVer 2.0.0 with an optional
-// leading `v` (which the caller will strip).
-func isSemverTag(s string) bool {
-	return semverTagPattern.MatchString(s)
-}
-
-// shortSHA returns the first 8 characters of s, or s itself when it is
-// shorter than 8. Used by the synthetic SemVer fallback to embed a
-// commit prefix as build metadata.
-func shortSHA(s string) string {
-	if len(s) < 8 {
-		return s
-	}
-	return s[:8]
 }
 
 // resolveUpstreamInputs picks values from either the positional URL or
@@ -479,86 +408,6 @@ func resolveInternalRef(o addOpts, cfg interface{ GetDefaultNamespace() string }
 		return "", fmt.Errorf("no default namespace configured; pass --namespace, set catalog.default_namespace in .skills-oci.yaml, or export SKILLS_OCI_DEFAULT_NAMESPACE")
 	}
 	return strings.TrimRight(ns, "/") + "/" + name, nil
-}
-
-// loadCatalogFile reads catalog.json from path. If the file does not
-// exist a zero-value v2 Catalog stamped with `now` as generated_at is
-// returned so the first `catalog add` in a repo bootstraps cleanly.
-// Files in the legacy v1 shape (or any partially-populated v2 file) are
-// migrated to a full v2 shape in-memory so subsequent AddEntry/Validate
-// calls succeed and the rewritten file matches the platform contract.
-func loadCatalogFile(path string, now time.Time) (catalog.Catalog, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return catalog.Catalog{SchemaVersion: 2, GeneratedAt: now}, nil
-		}
-		return catalog.Catalog{}, fmt.Errorf("reading %s: %w", path, err)
-	}
-	c, err := catalog.Load(data)
-	if err != nil {
-		return catalog.Catalog{}, err
-	}
-	return migrateToV2(c, now), nil
-}
-
-// migrateToV2 fills any missing v2 surface fields on c and its entries
-// using values derivable from the v1 source-pin fields already present.
-// This is the in-memory shim for legacy v1 catalog.json files left in
-// the wild (e.g. produced by earlier skills-oci versions). Already-v2
-// catalogs pass through unchanged because each assignment is guarded by
-// an "if empty/zero" check, making the migration idempotent.
-func migrateToV2(c catalog.Catalog, now time.Time) catalog.Catalog {
-	if c.SchemaVersion != 2 {
-		c.SchemaVersion = 2
-	}
-	if c.GeneratedAt.IsZero() {
-		c.GeneratedAt = now
-	}
-	for i := range c.Skills {
-		// Per-entry migration only applies to rows that look like
-		// vendor-managed entries from a legacy v1 file (i.e. they carry
-		// source-pin fields but may be missing the v2 surface fields).
-		// Pure indexer-managed rows are already v2-shaped and may
-		// intentionally carry the Go zero time on `updated_at` for
-		// unpublished status; leaving them untouched preserves that
-		// signal.
-		if !hasAnySourcePin(c.Skills[i]) {
-			continue
-		}
-		if c.Skills[i].Namespace == "" {
-			// Derive from internal_ref; ignore the error here so a
-			// genuinely malformed entry still surfaces via Validate
-			// with a clearer field-level message.
-			ns, _ := extractV2Namespace(c.Skills[i].InternalRef)
-			c.Skills[i].Namespace = ns
-		}
-		if c.Skills[i].Status == "" {
-			// Legacy v1 rows always carried a source-pin commit, so we
-			// can derive a real SemVer for them through the same chain
-			// catalog add uses for fresh rows. SKILL.md isn't available
-			// during migration, so steps 2 and 3 of the chain are
-			// implicitly skipped (the skill.SkillConfig is its zero
-			// value); the synthetic SHA fallback always fires.
-			c.Skills[i].LatestVersion = deriveLatestVersion(c.Skills[i].Version, skill.SkillConfig{}, c.Skills[i].Commit)
-			c.Skills[i].Status = catalog.StatusPublished
-		}
-		if c.Skills[i].UpdatedAt.IsZero() {
-			c.Skills[i].UpdatedAt = now
-		}
-		if c.Skills[i].Visibility == "" {
-			c.Skills[i].Visibility = catalog.VisibilityPublic
-		}
-	}
-	return c
-}
-
-// hasAnySourcePin reports whether the entry has at least one source-pin
-// field set — the marker used by migrateToV2 to identify vendor rows.
-// Centralizing the check here keeps the migration's "is this a vendor
-// row?" question local to its only caller.
-func hasAnySourcePin(e catalog.Entry) bool {
-	return e.Repo != "" || e.Subpath != "" || e.Version != "" || e.Commit != "" || e.InternalRef != ""
 }
 
 // configAccessor adapts config.Config to the small interface

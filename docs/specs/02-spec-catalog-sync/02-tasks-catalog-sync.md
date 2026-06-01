@@ -131,7 +131,7 @@ primitives. Pure-core-first; no command wiring yet.
 - [x] 2.6 REFACTOR + verify: `gofmt`, `go vet ./...`, `go test -cover ./pkg/catalog/`;
   confirm branch targets. Commit `feat(catalog): add vendored.json types and IO`.
 
-### [ ] 3.0 `cmd` — retarget `catalog add` to write `vendored.json`
+### [x] 3.0 `cmd` — retarget `catalog add` to write `vendored.json`
 
 Turn `catalog add` into a pure `vendored.json` mutator: write only
 `vendored.json` via `--vendored`; remove `--catalog`/`--detail-dir`; upsert with
@@ -163,11 +163,11 @@ resolve/fetch/verify unchanged; update docs.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 RED: in `cmd/catalog_add_test.go`, add `TestCatalogAdd_WritesVendored`
+- [x] 3.1 RED: in `cmd/catalog_add_test.go`, add `TestCatalogAdd_WritesVendored`
   (DI fakes for resolver/fetcher, fixture upstream with `SKILL.md`) asserting the
   written `vendored.json` shape and the **absence** of `catalog.json`/detail
   files. Fails against current catalog-writing behavior.
-- [ ] 3.1a RED cleanup (regression migration — FLAG 1): inventory the existing
+- [x] 3.1a RED cleanup (regression migration — FLAG 1): inventory the existing
   `cmd/catalog_add_test.go` cases that assert the **old** behavior
   (`catalog.json` migrate/append, `--detail-dir` detail writes, `latest_version`
   derivation, `migrateToV2`). Delete or rewrite each to the `vendored.json`
@@ -175,18 +175,18 @@ resolve/fetch/verify unchanged; update docs.
   cases that test still-valid behavior (URL/flag parsing, resolve, SKILL.md
   verify, SSRF `--repo` allow-list, dry-run). Do **not** modify
   `pkg/catalog/detail*_test.go`.
-- [ ] 3.2 GREEN: retarget `runCatalogAddWithDeps` — keep Steps 1-5
+- [x] 3.2 GREEN: retarget `runCatalogAddWithDeps` — keep Steps 1-5
   (resolveUpstreamInputs, name/internal_ref, resolve, fetch, verify) and
   `extractV2Namespace` for `namespace`; replace Steps 6-12 with: build a
   `catalog.VendoredEntry{name, namespace, repo, subpath, version, commit,
   internal_ref}`, `LoadVendored` existing (empty `Vendored{SchemaVersion:1}` if
   absent), `UpsertVendored`, and `WriteVendoredAtomic`. Make 3.1 pass.
-- [ ] 3.3 GREEN (flags): in `newCatalogAddCmd`/`parseAddOpts`, add
+- [x] 3.3 GREEN (flags): in `newCatalogAddCmd`/`parseAddOpts`, add
   `--vendored` (default `vendored.json`) and `-y`/`--yes` (bool); remove
   `--catalog` and `--detail-dir`; update `addOpts` (`VendoredPath`, `Yes`; drop
   `CatalogPath`, `DetailDir`); update `Short`/`Long`/`Example` text to say
   `vendored.json`.
-- [ ] 3.4 RED→GREEN (confirm UX): add `TestCatalogAdd_OverwriteRequiresConfirm`.
+- [x] 3.4 RED→GREEN (confirm UX): add `TestCatalogAdd_OverwriteRequiresConfirm`.
   Implement: when `UpsertVendored` reports `replaced`, print a warning to `out`;
   if `o.Yes` proceed; else if `o.Plain` return a non-zero error instructing
   `-y`; else prompt `[y/N]` and read a line from the injected reader
@@ -194,9 +194,9 @@ resolve/fetch/verify unchanged; update docs.
   reader into `runCatalogAddWithDeps`. Resolve before prompting only if needed;
   prefer loading `vendored.json` + checking existence before the network steps so
   a declined overwrite skips the fetch.
-- [ ] 3.5 RED→GREEN (dry-run): update/confirm `TestCatalogAdd_DryRun` — prints the
+- [x] 3.5 RED→GREEN (dry-run): update/confirm `TestCatalogAdd_DryRun` — prints the
   resolved `VendoredEntry` and writes nothing; keep `--dry-run`.
-- [ ] 3.6 REFACTOR (scoped deletion — FLAG 2): delete now-dead code paths in
+- [x] 3.6 REFACTOR (scoped deletion — FLAG 2): delete now-dead code paths in
   `cmd/catalog_add.go` (`buildSkillDetail`, `loadCatalogFile`, `migrateToV2`, and
   helpers such as
   `deriveLatestVersion`/`isSemverTag`/`shortSHA`/`semverTagPattern`/`hasAnySourcePin`).
@@ -205,12 +205,12 @@ resolve/fetch/verify unchanged; update docs.
   catch any miss; leave any symbol still referenced in place. Do **not** delete
   or modify `pkg/catalog` exported helpers (`AddEntry`, `WriteCatalogAtomic`) or
   `pkg/catalog/detail.go` — they are out of this slice's scope.
-- [ ] 3.7 Docs: update the README "Vendoring third-party skills" section
+- [x] 3.7 Docs: update the README "Vendoring third-party skills" section
   (flags table, "writes `vendored.json`" wording, examples); add a "Superseded
   by `docs/specs/02-spec-catalog-sync/`" banner to
   `docs/specs/catalog-sync-plan.md`.
-- [ ] 3.8 Proof capture: write `--help` and the 2-skill `--plain` run outputs to
+- [x] 3.8 Proof capture: write `--help` and the 2-skill `--plain` run outputs to
   `docs/specs/02-spec-catalog-sync/proofs/` (placeholder/public values only — no
   tokens).
-- [ ] 3.9 Verify + commit: `gofmt`, `go vet ./...`, `go test -cover ./...` green.
+- [x] 3.9 Verify + commit: `gofmt`, `go vet ./...`, `go test -cover ./...` green.
   Commit `feat(catalog): retarget \`catalog add\` to write vendored.json`.
