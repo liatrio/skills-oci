@@ -83,7 +83,7 @@ built-in (SKILL.md-derived) annotations with **caller keys winning**, and a
   confirm 100% branch coverage on the merge logic. Commit
   `feat(oci): add PushOptions.Annotations passthrough`.
 
-### [ ] 2.0 `pkg/catalog` — `vendored.json` types + IO
+### [x] 2.0 `pkg/catalog` — `vendored.json` types + IO
 
 Define the `vendored.json` schema and pure load/validate/upsert + atomic-write
 primitives. Pure-core-first; no command wiring yet.
@@ -107,28 +107,28 @@ primitives. Pure-core-first; no command wiring yet.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 RED: create `pkg/catalog/vendored_test.go` with `TestLoadVendored_RoundTrip`
+- [x] 2.1 RED: create `pkg/catalog/vendored_test.go` with `TestLoadVendored_RoundTrip`
   asserting `LoadVendored` parses the plan's exact JSON
   (`schemaVersion:1`, entry keys `name`,`namespace`,`repo`,`subpath`,`version`,
   `commit`,`internal_ref`). Fails (types/functions absent).
-- [ ] 2.2 GREEN: create `pkg/catalog/vendored.go` with `Vendored`
+- [x] 2.2 GREEN: create `pkg/catalog/vendored.go` with `Vendored`
   (`SchemaVersion int json:"schemaVersion"`, `Skills []VendoredEntry json:"skills"`)
   and `VendoredEntry` (the 7 string fields with the exact JSON tags above), plus
   `LoadVendored([]byte) (Vendored, error)`. Make 2.1 pass.
-- [ ] 2.3 RED→GREEN: add table-driven `TestValidateVendored` covering: unsupported
+- [x] 2.3 RED→GREEN: add table-driven `TestValidateVendored` covering: unsupported
   `schemaVersion`; each of the 7 fields missing; `commit` not 40 lowercase hex
   (too short, uppercase, non-hex); and a fully-valid entry. Implement
   `ValidateVendored(Vendored) error` (use a `^[0-9a-f]{40}$` regex for commit).
-- [ ] 2.4 RED→GREEN: add `TestUpsertVendored` (append-new; replace by
+- [x] 2.4 RED→GREEN: add `TestUpsertVendored` (append-new; replace by
   `(namespace,name)` with `replaced==true`; deterministic order sorted by
   `namespace` then `name`). Implement pure
   `UpsertVendored(v Vendored, e VendoredEntry) (Vendored, bool)`.
-- [ ] 2.5 RED→GREEN: add `TestWriteVendoredAtomic` (validates before write;
+- [x] 2.5 RED→GREEN: add `TestWriteVendoredAtomic` (validates before write;
   reload equality; stable key/entry order). Implement
   `WriteVendoredAtomic(path string, v Vendored) error` reusing `writeAtomic`
   (write.go:31) and `json.MarshalIndent` with a trailing newline (mirror
   `WriteSkillDetailAtomic`).
-- [ ] 2.6 REFACTOR + verify: `gofmt`, `go vet ./...`, `go test -cover ./pkg/catalog/`;
+- [x] 2.6 REFACTOR + verify: `gofmt`, `go vet ./...`, `go test -cover ./pkg/catalog/`;
   confirm branch targets. Commit `feat(catalog): add vendored.json types and IO`.
 
 ### [ ] 3.0 `cmd` — retarget `catalog add` to write `vendored.json`
