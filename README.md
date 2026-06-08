@@ -198,24 +198,37 @@ This removes the skill from `skills.json`, `skills.lock.json`, and deletes the e
 
 ## Vendoring third-party skills (`catalog add`)
 
-`skills-oci catalog add` records a third-party skill in a `vendored.json` desired-state file. It resolves an upstream GitHub reference to an **immutable commit SHA**, verifies that the upstream subpath actually contains a `SKILL.md`, and upserts an entry. It never contacts the destination registry.
+`skills-oci catalog add` records one or more third-party skills in a `vendored.json` desired-state file. It resolves an upstream GitHub reference to an **immutable commit SHA**, verifies that the upstream content actually contains a `SKILL.md`, and upserts an entry per skill. It never contacts the destination registry.
 
-Re-adding a skill that is already listed **overwrites** its pin in place (matched by `(namespace, name)`). On an interactive terminal you are warned and prompted before the overwrite; in a non-interactive context (`--plain`, piped/no TTY) pass `-y`/`--yes` to confirm — otherwise the command exits non-zero without writing.
+**Single skill vs. discovery.** If the URL/subpath points directly at a skill directory (one containing `SKILL.md`), exactly that skill is vendored — the classic single-skill case. If it points at a **container** (a directory or whole repo with no `SKILL.md` of its own), `catalog add` recursively discovers every directory that contains a `SKILL.md` and vendors each one, auto-naming it from its directory. Discovery stops descending once it finds a skill, so a skill's own nested example skills are not vendored separately. In discovery mode, `--name`/`--internal-ref` do not apply (each skill is named from its directory) — set `--namespace` instead.
+
+**Accepted URL forms.** A directory at a ref (`.../tree/<ref>/<subpath>`), a repo root at a ref (`.../tree/<ref>`), or a bare repo (`https://github.com/<owner>/<repo>`). For a bare repo the **default branch** is resolved to its head commit and that SHA is recorded as the entry's commit pin.
+
+Re-adding a skill that is already listed **overwrites** its pin in place (matched by `(namespace, name)`). On an interactive terminal you are prompted per skill before each overwrite; new skills are added without prompting. In a non-interactive context (`--plain`, piped/no TTY) an overwrite requires `-y`/`--yes` — otherwise the command exits non-zero, naming the conflicts, without writing.
 
 ```bash
-# URL form (tag)
+# Single skill, URL form (tag)
 skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/skill-creator --namespace liatrio
 
-# URL form (branch) — the branch head is resolved and the resulting SHA is recorded as the row's version
+# Single skill, URL form (branch) — the branch head is resolved and the resulting SHA is recorded as the row's commit pin
 skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator --namespace liatrio
 
-# Flag form
+# Many skills — repo root at a commit: discovers every SKILL.md directory and vendors each
+skills-oci catalog add https://github.com/anthropics/skills/tree/da20c92503b2e8ff1cf28ca81a0df4673debdbf7 --namespace liatrio
+
+# Many skills — bare repo: resolves the default branch, then discovers all skills
+skills-oci catalog add https://github.com/vercel-labs/agent-skills --namespace liatrio
+
+# Many skills under a container subpath
+skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills --namespace liatrio
+
+# Flag form (single skill)
 skills-oci catalog add --repo anthropics/skills --subpath skills/skill-creator --version v1.0.0 --namespace liatrio
 
-# Overwrite an existing entry non-interactively (CI / --plain)
-skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0/skills/skill-creator --namespace liatrio
+# Overwrite existing entries non-interactively (CI / --plain) — overwrites every discovered skill
+skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0 --namespace liatrio
 
-# Dry run prints the resolved entry without writing vendored.json
+# Dry run prints the would-be entries without writing vendored.json
 skills-oci catalog add <URL> --namespace liatrio --dry-run
 ```
 
@@ -224,14 +237,14 @@ The destination namespace is resolved by precedence: `--internal-ref` > `--names
 | Flag | Description |
 |------|-------------|
 | `--repo` | Upstream `<owner>/<repo>` slug (flag form; mutually exclusive with the positional URL) |
-| `--subpath` | Path within the upstream repo to the skill directory |
-| `--version` | Upstream tag, branch, or 40-hex commit SHA. Branches are resolved to the head commit and recorded as a SHA |
-| `--name` | Local entry name (default: last segment of the upstream subpath) |
-| `--namespace` / `--internal-ref` | Destination namespace / fully-qualified OCI ref |
+| `--subpath` | Path within the upstream repo. A skill directory vendors that one skill; a container directory discovers and vendors every skill beneath it |
+| `--version` | Upstream tag, branch, or 40-hex commit SHA to vendor. Resolved to an immutable commit SHA, which is recorded as the entry's commit pin. Omit (bare-repo URL only) to resolve the default branch |
+| `--name` | Local entry name (single-skill only; default: last segment of the upstream subpath). Ignored — and rejected — in discovery mode |
+| `--namespace` / `--internal-ref` | Destination namespace / fully-qualified OCI ref. `--internal-ref` is single-skill only |
 | `--vendored` | Path to `vendored.json` (default `vendored.json`) |
-| `-y`, `--yes` | Overwrite an existing entry without prompting (required to overwrite under `--plain` / non-interactive) |
-| `--timeout` | Maximum time for the network-bound resolve + fetch steps (default `60s`) |
-| `--dry-run` | Print the would-be entry (and whether it would add or overwrite) and exit without writing |
+| `-y`, `--yes` | Overwrite existing entries without prompting (required to overwrite under `--plain` / non-interactive) |
+| `--timeout` | Maximum time for the network-bound resolve + checkout steps (default `60s`) |
+| `--dry-run` | Print the would-be entries (and whether each would add or overwrite) and exit without writing |
 
 ## Using with Claude Code (Hook Integration)
 

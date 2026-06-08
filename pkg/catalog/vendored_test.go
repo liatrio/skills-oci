@@ -15,7 +15,6 @@ func validVendoredEntry() VendoredEntry {
 		Namespace:   "liatrio-labs",
 		Repo:        "liatrio-labs/skills",
 		Subpath:     "skills/manage-pull-requests",
-		Version:     "1.0.0",
 		Commit:      "0123456789abcdef0123456789abcdef01234567",
 		InternalRef: "liatrio-labs/manage-pull-requests",
 	}
@@ -32,7 +31,6 @@ func TestLoadVendored_RoundTrip(t *testing.T) {
       "namespace": "liatrio-labs",
       "repo": "liatrio-labs/skills",
       "subpath": "skills/manage-pull-requests",
-      "version": "1.0.0",
       "commit": "0123456789abcdef0123456789abcdef01234567",
       "internal_ref": "liatrio-labs/manage-pull-requests"
     }
@@ -105,7 +103,6 @@ func TestValidateVendored(t *testing.T) {
 		{"missing namespace", missing(func(e *VendoredEntry) { e.Namespace = "" }), true},
 		{"missing repo", missing(func(e *VendoredEntry) { e.Repo = "" }), true},
 		{"missing subpath", missing(func(e *VendoredEntry) { e.Subpath = "" }), true},
-		{"missing version", missing(func(e *VendoredEntry) { e.Version = "" }), true},
 		{"missing commit", missing(func(e *VendoredEntry) { e.Commit = "" }), true},
 		{"missing internal_ref", missing(func(e *VendoredEntry) { e.InternalRef = "" }), true},
 		{"commit too short", missing(func(e *VendoredEntry) { e.Commit = "0123abc" }), true},
@@ -128,9 +125,9 @@ func TestValidateVendored(t *testing.T) {
 func TestUpsertVendored(t *testing.T) {
 	t.Run("append new keeps deterministic order", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-			{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Version: "1.0.0", Commit: validVendoredEntry().Commit, InternalRef: "ns-b/zebra"},
+			{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-b/zebra"},
 		}}
-		add := VendoredEntry{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Version: "1.0.0", Commit: validVendoredEntry().Commit, InternalRef: "ns-a/alpha"}
+		add := VendoredEntry{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-a/alpha"}
 		got, replaced := UpsertVendored(base, add)
 		if replaced {
 			t.Errorf("replaced = true, want false for new entry")
@@ -146,9 +143,9 @@ func TestUpsertVendored(t *testing.T) {
 
 	t.Run("orders by name within the same namespace", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-			{Name: "yak", Namespace: "ns", Repo: "o/r", Subpath: "s", Version: "1.0.0", Commit: validVendoredEntry().Commit, InternalRef: "ns/yak"},
+			{Name: "yak", Namespace: "ns", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns/yak"},
 		}}
-		add := VendoredEntry{Name: "ant", Namespace: "ns", Repo: "o/r", Subpath: "s", Version: "1.0.0", Commit: validVendoredEntry().Commit, InternalRef: "ns/ant"}
+		add := VendoredEntry{Name: "ant", Namespace: "ns", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns/ant"}
 		got, _ := UpsertVendored(base, add)
 		if got.Skills[0].Name != "ant" || got.Skills[1].Name != "yak" {
 			t.Errorf("name order = [%s, %s], want [ant, yak]", got.Skills[0].Name, got.Skills[1].Name)
@@ -158,7 +155,6 @@ func TestUpsertVendored(t *testing.T) {
 	t.Run("replace existing by (namespace,name)", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{validVendoredEntry()}}
 		bump := validVendoredEntry()
-		bump.Version = "2.0.0"
 		bump.Commit = "fedcba9876543210fedcba9876543210fedcba98"
 		got, replaced := UpsertVendored(base, bump)
 		if !replaced {
@@ -167,18 +163,19 @@ func TestUpsertVendored(t *testing.T) {
 		if len(got.Skills) != 1 {
 			t.Fatalf("len = %d, want 1 (in-place replace)", len(got.Skills))
 		}
-		if got.Skills[0].Version != "2.0.0" || got.Skills[0].Commit != bump.Commit {
+		if got.Skills[0].Commit != bump.Commit {
 			t.Errorf("entry not replaced: %+v", got.Skills[0])
 		}
 	})
 
 	t.Run("does not mutate the input", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{validVendoredEntry()}}
+		origCommit := base.Skills[0].Commit
 		bump := validVendoredEntry()
-		bump.Version = "9.9.9"
+		bump.Commit = "fedcba9876543210fedcba9876543210fedcba98"
 		_, _ = UpsertVendored(base, bump)
-		if base.Skills[0].Version != "1.0.0" {
-			t.Errorf("input mutated: base version = %q, want 1.0.0", base.Skills[0].Version)
+		if base.Skills[0].Commit != origCommit {
+			t.Errorf("input mutated: base commit = %q, want %q", base.Skills[0].Commit, origCommit)
 		}
 	})
 
@@ -196,8 +193,8 @@ func TestWriteVendoredAtomic(t *testing.T) {
 
 	// Unsorted input; the writer should persist in deterministic order.
 	v := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-		{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Version: "1.0.0", Commit: validVendoredEntry().Commit, InternalRef: "ns-b/zebra"},
-		{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Version: "1.0.0", Commit: validVendoredEntry().Commit, InternalRef: "ns-a/alpha"},
+		{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-b/zebra"},
+		{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-a/alpha"},
 	}}
 	if err := WriteVendoredAtomic(path, v); err != nil {
 		t.Fatalf("WriteVendoredAtomic: %v", err)

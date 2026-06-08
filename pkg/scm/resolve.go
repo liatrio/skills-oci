@@ -97,6 +97,61 @@ func ResolveRef(ctx context.Context, repo, ref string) (sha string, immutable bo
 	return sha, kind == refKindTag, nil
 }
 
+// ResolveHEAD resolves the default-branch tip of repo to a commit SHA via
+// an HTTPS ls-remote. It is the resolver for bare-repo inputs that carry no
+// ref (e.g. `https://github.com/owner/repo`): the server advertises HEAD as
+// a symbolic ref pointing at the default branch, and this returns that
+// branch's tip commit. The default branch is mutable, so callers should
+// record the returned SHA (treating the result like a branch resolution).
+//
+// repo must be an `<owner>/<repo>` slug, validated before any network call
+// so a hostile value cannot smuggle an ls-remote target (SSRF, file://
+// reads); tests override the remoteURLForResolve seam to reach fixtures.
+func ResolveHEAD(ctx context.Context, repo string) (string, error) {
+	if repo == "" {
+		return "", fmt.Errorf("resolving HEAD: empty repo")
+	}
+	if !slugPattern.MatchString(repo) {
+		return "", fmt.Errorf("resolving HEAD: invalid repo %q (must be an <owner>/<repo> slug matching %s)", repo, slugPattern.String())
+	}
+
+	remoteURL := remoteURLForResolve(repo)
+	remote := git.NewRemote(memory.NewStorage(), &config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{remoteURL},
+	})
+	refs, err := remote.ListContext(ctx, &git.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("resolving HEAD on %s: %w", repo, err)
+	}
+
+	// HEAD is advertised either as a symbolic ref naming the default branch
+	// (resolve its target's hash from the same listing) or, on some servers,
+	// directly as a hash ref. Handle both.
+	var headHash string
+	byName := make(map[plumbing.ReferenceName]string, len(refs))
+	for _, r := range refs {
+		byName[r.Name()] = r.Hash().String()
+	}
+	for _, r := range refs {
+		if r.Name() != plumbing.HEAD {
+			continue
+		}
+		if r.Type() == plumbing.SymbolicReference {
+			if h, ok := byName[r.Target()]; ok && h != "" {
+				return h, nil
+			}
+		}
+		if !r.Hash().IsZero() {
+			headHash = r.Hash().String()
+		}
+	}
+	if headHash != "" {
+		return headHash, nil
+	}
+	return "", fmt.Errorf("resolving HEAD on %s: no default branch advertised", repo)
+}
+
 type refKind int
 
 const (

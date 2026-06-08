@@ -21,15 +21,14 @@ type Vendored struct {
 	Skills        []VendoredEntry `json:"skills"`
 }
 
-// VendoredEntry is one source-pin in vendored.json. `version` is the label the
-// user vendored at (a tag or SHA); `commit` is always the resolved 40-character
-// lowercase hex SHA — the immutability property the sync workflow relies on.
+// VendoredEntry is one source-pin in vendored.json. `commit` is always the
+// resolved 40-character lowercase hex SHA — the immutability property the sync
+// workflow relies on.
 type VendoredEntry struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
 	Repo        string `json:"repo"`
 	Subpath     string `json:"subpath"`
-	Version     string `json:"version"`
 	Commit      string `json:"commit"`
 	InternalRef string `json:"internal_ref"`
 }
@@ -50,7 +49,7 @@ func LoadVendored(data []byte) (Vendored, error) {
 }
 
 // ValidateVendored enforces the vendored.json contract: schemaVersion must be
-// exactly 1, every entry must have all seven fields populated, and every
+// exactly 1, every entry must have all six fields populated, and every
 // `commit` must be a 40-character lowercase hex Git SHA (reusing commitPattern,
 // the same guard the source-pin catalog uses). An empty skills list is valid.
 func ValidateVendored(v Vendored) error {
@@ -67,8 +66,6 @@ func ValidateVendored(v Vendored) error {
 			return fmt.Errorf("skills[%d].repo: must not be empty", i)
 		case e.Subpath == "":
 			return fmt.Errorf("skills[%d].subpath: must not be empty", i)
-		case e.Version == "":
-			return fmt.Errorf("skills[%d].version: must not be empty", i)
 		case e.InternalRef == "":
 			return fmt.Errorf("skills[%d].internal_ref: must not be empty", i)
 		}
