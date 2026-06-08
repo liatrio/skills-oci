@@ -74,6 +74,72 @@ func TestLoadVendored_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestVendored_LicenseRoundTrip(t *testing.T) {
+	// Arrange: an entry carrying an optional license string.
+	in := []byte(`{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "name": "manage-pull-requests",
+      "namespace": "liatrio-labs",
+      "repo": "liatrio-labs/skills",
+      "subpath": "skills/manage-pull-requests",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "internal_ref": "liatrio-labs/manage-pull-requests",
+      "license": "Apache-2.0"
+    }
+  ]
+}`)
+
+	// Act
+	v, err := LoadVendored(in)
+	if err != nil {
+		t.Fatalf("LoadVendored: %v", err)
+	}
+
+	// Assert: license parsed and survives a write/reload round-trip.
+	if got := v.Skills[0].License; got != "Apache-2.0" {
+		t.Errorf("license = %q, want %q", got, "Apache-2.0")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vendored.json")
+	if err := WriteVendoredAtomic(path, v); err != nil {
+		t.Fatalf("WriteVendoredAtomic: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if !strings.Contains(string(body), `"license": "Apache-2.0"`) {
+		t.Errorf("written vendored.json missing license field:\n%s", body)
+	}
+	v2, err := LoadVendored(body)
+	if err != nil {
+		t.Fatalf("LoadVendored (round 2): %v", err)
+	}
+	if !reflect.DeepEqual(v, v2) {
+		t.Errorf("round-trip mismatch:\n got %+v\nwant %+v", v2, v)
+	}
+}
+
+func TestVendored_LicenseOmittedWhenEmpty(t *testing.T) {
+	// An entry with no license must not emit a "license" key (omitempty), so
+	// existing entries and SKILL.md files without a license stay clean.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "vendored.json")
+	v := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{validVendoredEntry()}}
+	if err := WriteVendoredAtomic(path, v); err != nil {
+		t.Fatalf("WriteVendoredAtomic: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if strings.Contains(string(body), "license") {
+		t.Errorf("empty license should be omitted, got:\n%s", body)
+	}
+}
+
 func TestLoadVendored_Errors(t *testing.T) {
 	if _, err := LoadVendored([]byte("   \n")); err == nil {
 		t.Errorf("LoadVendored(empty) = nil, want error")
