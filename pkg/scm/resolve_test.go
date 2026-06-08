@@ -240,6 +240,44 @@ func TestResolveRef_EmptyRepoRejects(t *testing.T) {
 	}
 }
 
+func TestResolveHEAD_ResolvesDefaultBranch(t *testing.T) {
+	// A bare-repo input carries no ref; ResolveHEAD must resolve the
+	// default-branch tip. The fixture's default branch is master, sitting on
+	// V200Commit (the most recent commit).
+	fixture := newFixtureRepo(t)
+	pointResolveAt(t, fixture.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	sha, err := ResolveHEAD(ctx, "fixture/fixture")
+	if err != nil {
+		t.Fatalf("ResolveHEAD: %v", err)
+	}
+	if sha != fixture.V200Commit {
+		t.Errorf("sha = %q, want %q (HEAD of default branch)", sha, fixture.V200Commit)
+	}
+}
+
+func TestResolveHEAD_EmptyRepoRejects(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	if _, err := ResolveHEAD(ctx, ""); err == nil {
+		t.Fatal("ResolveHEAD accepted empty repo")
+	}
+}
+
+func TestResolveHEAD_RejectsNonSlugRepo(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	// A non-slug repo must be rejected before any network call so it cannot
+	// smuggle an arbitrary ls-remote target (SSRF / file:// reads).
+	if _, err := ResolveHEAD(ctx, "file:///etc/passwd"); err == nil {
+		t.Fatal("ResolveHEAD accepted non-slug repo")
+	}
+}
+
 func TestResolveTag_RepoSlugBuildsGitHubURL(t *testing.T) {
 	// The slug -> github.com rewrite is the production seam. Inspect the
 	// builder directly with zero network I/O (a real outbound call would

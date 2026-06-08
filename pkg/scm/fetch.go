@@ -39,45 +39,8 @@ func Fetch(ctx context.Context, ref SourceRef, dst string) error {
 	if dst == "" {
 		return fmt.Errorf("fetch: empty dst")
 	}
-
-	url := remoteURLForFetch(ref.Owner, ref.Repo)
-
-	// CloneContext with NoCheckout=true does the equivalent of `git init`
-	// + add remote + fetch in one call. We pin SingleBranch=false to let
-	// the server send the commit even if it's not on a default branch.
-	repo, err := git.PlainInit(dst, false)
-	if err != nil {
-		return fmt.Errorf("fetch: init repo: %w", err)
-	}
-	if _, err := repo.CreateRemote(&config.RemoteConfig{
-		Name: "origin",
-		URLs: []string{url},
-	}); err != nil {
-		return wipeAndWrap(dst, fmt.Errorf("fetch: add remote: %w", err))
-	}
-
-	commitHash := plumbing.NewHash(ref.Commit)
-	// Fetch the specific commit. Depth=1 keeps history minimal. The
-	// commit SHA is supplied via RefSpec so the server resolves it
-	// directly (requires uploadpack.allowReachableSHA1InWant on the
-	// server, which is GitHub's default for public repos and what our
-	// fixture sets explicitly).
-	if err := repo.FetchContext(ctx, &git.FetchOptions{
-		RemoteName: "origin",
-		Depth:      1,
-		RefSpecs: []config.RefSpec{
-			config.RefSpec(ref.Commit + ":refs/skills-oci/fetched"),
-		},
-	}); err != nil {
-		return wipeAndWrap(dst, fmt.Errorf("fetch: fetching commit %s from %s: %w", ref.Commit, url, err))
-	}
-
-	wt, err := repo.Worktree()
-	if err != nil {
-		return wipeAndWrap(dst, fmt.Errorf("fetch: worktree: %w", err))
-	}
-	if err := wt.Checkout(&git.CheckoutOptions{Hash: commitHash}); err != nil {
-		return wipeAndWrap(dst, fmt.Errorf("fetch: checkout %s: %w", ref.Commit, err))
+	if err := cloneCheckout(ctx, ref, dst); err != nil {
+		return err
 	}
 
 	subpathDir := filepath.Join(dst, filepath.FromSlash(ref.Subpath))
@@ -101,6 +64,77 @@ func Fetch(ctx context.Context, ref SourceRef, dst string) error {
 		return wipeAndWrap(dst, fmt.Errorf("fetch: subpath %q SKILL.md at commit %s resolves outside the checkout", ref.Subpath, ref.Commit))
 	}
 
+	return nil
+}
+
+// Checkout shallow-clones the upstream Git repository identified by ref
+// into dst and checks out ref.Commit, WITHOUT requiring a SKILL.md. Unlike
+// Fetch, ref.Subpath may be empty (the whole repo); when non-empty it is
+// verified to exist and to stay within the checkout, but its contents are
+// not inspected. Checkout is the clone half used by multi-skill discovery:
+// callers run DiscoverSkills over the result. dst lifecycle and the
+// error-wipe contract mirror Fetch.
+func Checkout(ctx context.Context, ref SourceRef, dst string) error {
+	if err := validateRefForCheckout(ref); err != nil {
+		return fmt.Errorf("checkout: %w", err)
+	}
+	if dst == "" {
+		return fmt.Errorf("checkout: empty dst")
+	}
+	if err := cloneCheckout(ctx, ref, dst); err != nil {
+		return err
+	}
+	if ref.Subpath == "" {
+		return nil
+	}
+	subpathDir := filepath.Join(dst, filepath.FromSlash(ref.Subpath))
+	if info, err := os.Stat(subpathDir); err != nil || !info.IsDir() {
+		return wipeAndWrap(dst, fmt.Errorf("checkout: subpath %q not found at commit %s", ref.Subpath, ref.Commit))
+	}
+	if ok, err := withinRoot(dst, subpathDir); err != nil || !ok {
+		return wipeAndWrap(dst, fmt.Errorf("checkout: subpath %q at commit %s resolves outside the checkout", ref.Subpath, ref.Commit))
+	}
+	return nil
+}
+
+// cloneCheckout is the shared network half of Fetch and Checkout: it inits
+// a repo in dst, fetches exactly ref.Commit at depth 1, and checks that
+// commit out. The commit SHA is supplied via RefSpec so the server resolves
+// it directly (requires uploadpack.allowReachableSHA1InWant, GitHub's
+// default for public repos and what the fixtures set explicitly). On any
+// error the dst contents are wiped so a retry against the same dir is safe.
+func cloneCheckout(ctx context.Context, ref SourceRef, dst string) error {
+	url := remoteURLForFetch(ref.Owner, ref.Repo)
+
+	repo, err := git.PlainInit(dst, false)
+	if err != nil {
+		return fmt.Errorf("fetch: init repo: %w", err)
+	}
+	if _, err := repo.CreateRemote(&config.RemoteConfig{
+		Name: "origin",
+		URLs: []string{url},
+	}); err != nil {
+		return wipeAndWrap(dst, fmt.Errorf("fetch: add remote: %w", err))
+	}
+
+	commitHash := plumbing.NewHash(ref.Commit)
+	if err := repo.FetchContext(ctx, &git.FetchOptions{
+		RemoteName: "origin",
+		Depth:      1,
+		RefSpecs: []config.RefSpec{
+			config.RefSpec(ref.Commit + ":refs/skills-oci/fetched"),
+		},
+	}); err != nil {
+		return wipeAndWrap(dst, fmt.Errorf("fetch: fetching commit %s from %s: %w", ref.Commit, url, err))
+	}
+
+	wt, err := repo.Worktree()
+	if err != nil {
+		return wipeAndWrap(dst, fmt.Errorf("fetch: worktree: %w", err))
+	}
+	if err := wt.Checkout(&git.CheckoutOptions{Hash: commitHash}); err != nil {
+		return wipeAndWrap(dst, fmt.Errorf("fetch: checkout %s: %w", ref.Commit, err))
+	}
 	return nil
 }
 
@@ -130,19 +164,30 @@ func withinRoot(root, candidate string) (bool, error) {
 
 // validateRef enforces the safety properties that the catalog layer
 // validates at load time, replicated here so callers that build a
-// SourceRef by hand cannot bypass them.
+// SourceRef by hand cannot bypass them. It is the Fetch (single-skill)
+// variant: the subpath must be non-empty.
 func validateRef(ref SourceRef) error {
+	if err := validateRefForCheckout(ref); err != nil {
+		return err
+	}
+	if ref.Subpath == "" {
+		return fmt.Errorf("invalid subpath: empty")
+	}
+	return nil
+}
+
+// validateRefForCheckout is the Checkout (multi-skill) variant of
+// validateRef: it enforces owner/repo/commit safety and the `..`-segment
+// guard, but tolerates an empty subpath (the whole repo). A non-empty
+// subpath still may not contain `..` segments so filepath.Join(dst,
+// subpath) cannot escape the temp tree.
+func validateRefForCheckout(ref SourceRef) error {
 	if ref.Owner == "" || !ownerRepoPattern.MatchString(ref.Owner) {
 		return fmt.Errorf("invalid owner %q (must match %s)", ref.Owner, ownerRepoPattern.String())
 	}
 	if ref.Repo == "" || !ownerRepoPattern.MatchString(ref.Repo) {
 		return fmt.Errorf("invalid repo %q (must match %s)", ref.Repo, ownerRepoPattern.String())
 	}
-	if ref.Subpath == "" {
-		return fmt.Errorf("invalid subpath: empty")
-	}
-	// Reject any `..` segment so filepath.Join(dst, subpath) cannot escape
-	// the temp tree and probe arbitrary filesystem paths via os.Stat.
 	for _, seg := range strings.Split(ref.Subpath, "/") {
 		if seg == ".." {
 			return fmt.Errorf("invalid subpath %q (must not contain '..' segments)", ref.Subpath)

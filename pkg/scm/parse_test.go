@@ -54,6 +54,38 @@ func TestParseGitHubTreeURL_HappyPaths(t *testing.T) {
 			wantRefOrSHA: "v1.0.0",
 			wantSubpath:  "skills/create-skill",
 		},
+		{
+			name:         "repo-root tree url (no subpath)",
+			url:          "https://github.com/anthropics/skills/tree/da20c92503b2e8ff1cf28ca81a0df4673debdbf7",
+			wantOwner:    "anthropics",
+			wantRepo:     "skills",
+			wantRefOrSHA: "da20c92503b2e8ff1cf28ca81a0df4673debdbf7",
+			wantSubpath:  "",
+		},
+		{
+			name:         "repo-root tree url trailing slash",
+			url:          "https://github.com/anthropics/skills/tree/v1.0.0/",
+			wantOwner:    "anthropics",
+			wantRepo:     "skills",
+			wantRefOrSHA: "v1.0.0",
+			wantSubpath:  "",
+		},
+		{
+			name:         "bare repo url (no ref, no subpath)",
+			url:          "https://github.com/vercel-labs/agent-skills",
+			wantOwner:    "vercel-labs",
+			wantRepo:     "agent-skills",
+			wantRefOrSHA: "",
+			wantSubpath:  "",
+		},
+		{
+			name:         "bare repo url trailing slash",
+			url:          "https://github.com/vercel-labs/agent-skills/",
+			wantOwner:    "vercel-labs",
+			wantRepo:     "agent-skills",
+			wantRefOrSHA: "",
+			wantSubpath:  "",
+		},
 	}
 
 	for _, tt := range tests {
@@ -127,14 +159,9 @@ func TestParseGitHubTreeURL_Rejections(t *testing.T) {
 			wantInErr: "parsing tree url",
 		},
 		{
-			name:      "missing subpath (just owner/repo/tree/ref)",
-			url:       "https://github.com/anthropics/skills/tree/v1.0.0",
-			wantInErr: "subpath",
-		},
-		{
-			name:      "missing subpath with trailing slash",
-			url:       "https://github.com/anthropics/skills/tree/v1.0.0/",
-			wantInErr: "subpath",
+			name:      "non-tree third segment (issues)",
+			url:       "https://github.com/anthropics/skills/issues/42",
+			wantInErr: "tree",
 		},
 		{
 			name:      "empty string",

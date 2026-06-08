@@ -56,27 +56,37 @@ type addOpts struct {
 	Timeout time.Duration
 }
 
-// fetcher and resolver are minimal interfaces over the package-level
+// puller and resolver are minimal interfaces over the package-level
 // functions in pkg/scm. Production code uses the real package functions;
 // tests can supply doubles when they want to avoid go-git overhead.
-type fetcher interface {
-	Fetch(ctx context.Context, ref scm.SourceRef, dst string) error
+//
+// puller clones an upstream (sub)tree at a commit into a temp dir and
+// discovers the skills inside it. The two steps are one interface because
+// discovery always runs over a checkout the puller just produced.
+type puller interface {
+	Checkout(ctx context.Context, ref scm.SourceRef, dst string) error
+	Discover(dst, relRoot string) (subpaths []string, err error)
 }
 
 // resolver resolves a user-supplied ref (tag, branch, or SHA) to a
 // commit SHA. The immutable bool reports whether the input ref is an
-// immutable label safe to persist in the entry's `version` field:
-// true for tags and SHAs, false for branches. The orchestrator overwrites
-// the captured ref string with the SHA when immutable is false so the
-// vendored row never carries a mutable branch name.
+// immutable label (true for tags and SHAs, false for branches); the vendored
+// row always pins the resolved SHA, so the ref's mutability does not affect
+// what is persisted. ResolveHEAD resolves the default-branch tip for
+// bare-repo inputs that carry no ref.
 type resolver interface {
 	ResolveRef(ctx context.Context, repo, ref string) (sha string, immutable bool, err error)
+	ResolveHEAD(ctx context.Context, repo string) (sha string, err error)
 }
 
-type realFetcher struct{}
+type realPuller struct{}
 
-func (realFetcher) Fetch(ctx context.Context, ref scm.SourceRef, dst string) error {
-	return scm.Fetch(ctx, ref, dst)
+func (realPuller) Checkout(ctx context.Context, ref scm.SourceRef, dst string) error {
+	return scm.Checkout(ctx, ref, dst)
+}
+
+func (realPuller) Discover(dst, relRoot string) ([]string, error) {
+	return scm.DiscoverSkills(dst, relRoot)
 }
 
 type realResolver struct{}
@@ -85,33 +95,46 @@ func (realResolver) ResolveRef(ctx context.Context, repo, ref string) (string, b
 	return scm.ResolveRef(ctx, repo, ref)
 }
 
+func (realResolver) ResolveHEAD(ctx context.Context, repo string) (string, error) {
+	return scm.ResolveHEAD(ctx, repo)
+}
+
 func newCatalogAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add [URL]",
-		Short: "Vendor a third-party skill into vendored.json",
-		Long:  "Resolves an upstream GitHub URL (or component flags) to an immutable commit SHA, verifies the upstream subpath contains SKILL.md, and upserts the source-pin entry into vendored.json. Never contacts the destination registry.",
-		Example: `  # URL form (tag)
+		Short: "Vendor one or more third-party skills into vendored.json",
+		Long: "Resolves an upstream GitHub URL (or component flags) to an immutable commit SHA and upserts source-pin entries into vendored.json. " +
+			"A URL pointing at a skill directory vendors that one skill; a URL pointing at a container directory or a whole repo " +
+			"recursively discovers every directory containing a SKILL.md and vendors each. A bare repo URL (no /tree/<ref>) resolves the " +
+			"default branch. Never contacts the destination registry.",
+		Example: `  # Single skill, URL form (tag)
   skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill
 
-  # URL form (branch) — the resolver looks up the branch's head commit and records that SHA as the entry's version
+  # Single skill, URL form (branch) — the branch's head commit SHA is recorded as the entry's commit pin
   skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator
 
-  # Flag form
+  # Many skills — repo root at a commit: discovers and vendors every skill
+  skills-oci catalog add https://github.com/anthropics/skills/tree/da20c92503b2e8ff1cf28ca81a0df4673debdbf7
+
+  # Many skills — bare repo: resolves the default branch, then discovers all skills
+  skills-oci catalog add https://github.com/vercel-labs/agent-skills
+
+  # Flag form (single skill)
   skills-oci catalog add --repo anthropics/skills --subpath skills/create-skill --version v1.0.0
 
-  # Overwrite an existing entry non-interactively (CI / --plain)
-  skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0/skills/create-skill
+  # Overwrite existing entries non-interactively (CI / --plain)
+  skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0
 
-  # Dry run prints the resolved entry without writing vendored.json
-  skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill --dry-run`,
+  # Dry run prints the would-be entries without writing vendored.json
+  skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: runCatalogAdd,
 	}
 	cmd.Flags().String("repo", "", "Upstream <owner>/<repo> slug (mutually exclusive with positional URL)")
-	cmd.Flags().String("subpath", "", "Path within the upstream repo to the skill directory")
-	cmd.Flags().String("version", "", "Upstream tag, branch, or 40-hex commit SHA (branches are resolved to the head commit and recorded as a SHA)")
-	cmd.Flags().String("name", "", "Local entry name (default: last segment of the upstream subpath, whether from the URL or --subpath)")
-	cmd.Flags().String("internal-ref", "", "Destination OCI ref without tag (overrides --namespace derivation)")
+	cmd.Flags().String("subpath", "", "Path within the upstream repo; a skill directory vendors one skill, a container directory discovers and vendors all skills beneath it")
+	cmd.Flags().String("version", "", "Upstream tag, branch, or 40-hex commit SHA to vendor (resolved to an immutable commit SHA, which is recorded as the entry's commit pin)")
+	cmd.Flags().String("name", "", "Local entry name for a single skill (default: last segment of the subpath); not allowed when multiple skills are discovered")
+	cmd.Flags().String("internal-ref", "", "Destination OCI ref without tag for a single skill (overrides --namespace derivation); not allowed when multiple skills are discovered")
 	cmd.Flags().String("namespace", "", "Destination namespace prefix; combined with --name to derive --internal-ref")
 	cmd.Flags().String("vendored", "vendored.json", "Path to vendored.json")
 	cmd.Flags().BoolP("yes", "y", false, "Overwrite an existing entry without prompting (required to overwrite in non-interactive/--plain mode)")
@@ -125,7 +148,7 @@ func runCatalogAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runCatalogAddWithDeps(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), opts, configFromContextAccessor(cmd.Context()), realResolver{}, realFetcher{})
+	return runCatalogAddWithDeps(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), opts, configFromContextAccessor(cmd.Context()), realResolver{}, realPuller{})
 }
 
 // parseAddOpts is split out for testability — it has no IO and no
@@ -160,59 +183,32 @@ func parseAddOpts(cmd *cobra.Command, args []string) (addOpts, error) {
 	return o, nil
 }
 
+// plannedEntry is one discovered skill's resolved vendored entry plus
+// whether writing it would overwrite an existing (namespace, name) row.
+type plannedEntry struct {
+	entry      catalog.VendoredEntry
+	overwrites bool
+}
+
 // runCatalogAddWithDeps is the orchestration layer. It takes the resolver
-// and fetcher as interfaces, and the prompt's input as an io.Reader, so
-// tests can swap them out without a network or a TTY. Steps are ordered
-// cheap-and-decisive first, network-bound second, file write last — any
-// error before the write leaves vendored.json untouched.
+// and puller as interfaces, and the prompt's input as an io.Reader, so tests
+// can swap them out without a network or a TTY. The flow is unified across
+// single- and multi-skill adds: it always clones the (sub)tree, discovers
+// every SKILL.md directory inside it, and vendors each. A URL/flag subpath
+// that is itself a skill discovers exactly itself (the classic single-skill
+// case). Any error before the final write leaves vendored.json untouched.
 func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o addOpts, cfg interface {
 	GetDefaultNamespace() string
-}, res resolver, fet fetcher) error {
-	// Step 1: parse URL or flag form into the upstream-side fields.
-	owner, repo, subpath, version, err := resolveUpstreamInputs(o)
+}, res resolver, pul puller) error {
+	// Step 1: parse URL or flag form into the upstream-side fields. Subpath
+	// and version may be empty for the repo-root and bare-repo URL forms.
+	owner, repo, rootSubpath, version, err := resolveUpstreamInputs(o)
 	if err != nil {
 		return err
 	}
 
-	// Step 2: derive name + internal_ref + the v2 namespace. None of this
-	// needs the network, so it is available before the overwrite check below.
-	name := o.Name
-	if name == "" {
-		name = path.Base(subpath)
-	}
-	internalRef, err := resolveInternalRef(o, cfg, name)
-	if err != nil {
-		return err
-	}
-	v2Namespace, err := extractV2Namespace(internalRef)
-	if err != nil {
-		return err
-	}
-
-	// Step 3: load existing vendored.json (empty if absent) and decide whether
-	// this add would overwrite an existing (namespace, name) entry.
-	cur, err := loadVendoredFile(o.VendoredPath)
-	if err != nil {
-		return err
-	}
-	overwrites := vendoredHasEntry(cur, v2Namespace, name)
-
-	// Step 4: overwrite confirmation. Done before the network steps so a
-	// declined overwrite skips the fetch entirely. Dry-run never writes, so it
-	// is exempt from the prompt (it reports the would-be action instead).
-	if overwrites && !o.DryRun {
-		proceed, err := confirmOverwrite(out, in, o, v2Namespace, name)
-		if err != nil {
-			return err
-		}
-		if !proceed {
-			fmt.Fprintln(out, "aborted; vendored.json unchanged")
-			return nil
-		}
-	}
-
-	// The two network-bound steps (ResolveRef, Fetch) share a deadline so a
-	// hung resolver or fetch cannot block indefinitely. cmd.Context() has no
+	// The two network-bound steps (resolve, checkout) share a deadline so a
+	// hung resolver or clone cannot block indefinitely. cmd.Context() has no
 	// deadline of its own; a non-positive Timeout means "no deadline".
 	netCtx := ctx
 	if o.Timeout > 0 {
@@ -221,99 +217,226 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 		defer cancel()
 	}
 
-	// Step 5: resolve ref → commit SHA. Tags, branches, and 40-hex SHAs are
-	// all accepted; branches resolve to the head commit and trigger the
-	// version-swap below so the row records the SHA instead of the mutable
-	// branch name.
-	fmt.Fprintf(out, "resolving %s/%s@%s\n", owner, repo, version)
-	commit, immutable, err := res.ResolveRef(netCtx, owner+"/"+repo, version)
+	// Step 2: resolve ref → commit SHA. An empty version is a bare-repo input
+	// with no ref: resolve the default-branch HEAD instead.
+	commit, err := resolveCommit(netCtx, out, res, owner, repo, version)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "  → commit %s\n", commit)
-	if !immutable {
-		fmt.Fprintf(out, "  note: %q is mutable; recording resolved SHA as version for an immutable row\n", version)
-		version = commit
-	}
 
-	// Step 6: fetch subpath at SHA into temp dir, verify SKILL.md.
+	// Step 3: clone the (sub)tree at the commit and discover the skills in it.
 	tmp, err := os.MkdirTemp("", "skills-oci-catalog-add-*")
 	if err != nil {
 		return fmt.Errorf("creating temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmp)
-	fmt.Fprintf(out, "fetching subpath %s\n", subpath)
-	ref := scm.SourceRef{Owner: owner, Repo: repo, Subpath: subpath, Commit: commit}
-	if err := fet.Fetch(netCtx, ref, tmp); err != nil {
-		return fmt.Errorf("fetching subpath %s: %w", subpath, err)
+	if rootSubpath != "" {
+		fmt.Fprintf(out, "fetching subpath %s\n", rootSubpath)
+	} else {
+		fmt.Fprintf(out, "fetching repo %s/%s\n", owner, repo)
 	}
-	fmt.Fprintln(out, "verifying SKILL.md")
-
-	// Step 7: read upstream SKILL.md frontmatter and surface name/version/license.
-	skillDir := filepath.Join(tmp, filepath.FromSlash(subpath))
-	parsed, err := skill.Parse(skillDir)
+	ref := scm.SourceRef{Owner: owner, Repo: repo, Subpath: rootSubpath, Commit: commit}
+	if err := pul.Checkout(netCtx, ref, tmp); err != nil {
+		return fmt.Errorf("fetching subpath %s: %w", rootSubpath, err)
+	}
+	subpaths, err := pul.Discover(tmp, rootSubpath)
 	if err != nil {
-		return fmt.Errorf("reading upstream SKILL.md: %w", err)
-	}
-	fmt.Fprintf(out, "  upstream name: %s\n", parsed.Config.Name)
-	if parsed.Config.Version != "" {
-		fmt.Fprintf(out, "  upstream version: %s\n", parsed.Config.Version)
-	}
-	if parsed.Config.License != "" {
-		fmt.Fprintf(out, "  upstream license: %s\n", parsed.Config.License)
+		return err
 	}
 
-	// Step 8: build the vendored entry from the resolved coordinates.
-	entry := catalog.VendoredEntry{
-		Name:        name,
-		Namespace:   v2Namespace,
-		Repo:        owner + "/" + repo,
-		Subpath:     subpath,
-		Version:     version,
-		Commit:      commit,
-		InternalRef: internalRef,
-	}
-
-	// Step 9: --dry-run short-circuit — print the resolved entry and the
-	// would-be action, write nothing.
-	if o.DryRun {
-		action := "add"
-		if overwrites {
-			action = "overwrite"
+	// singleTarget is the classic case: the URL/flag subpath is itself a
+	// skill. Only then do --name / --internal-ref overrides apply. Any other
+	// shape (a container directory, a repo root, or more than one discovered
+	// skill) is discovery mode, where each skill is auto-named from its
+	// directory and only --namespace governs the destination.
+	singleTarget := len(subpaths) == 1 && rootSubpath != "" && subpaths[0] == rootSubpath
+	if !singleTarget {
+		if o.Name != "" || o.InternalRef != "" {
+			return fmt.Errorf("--name and --internal-ref apply only to a single skill, but %d were discovered under %q; use --namespace instead", len(subpaths), rootSubpath)
 		}
-		body, err := json.MarshalIndent(entry, "", "  ")
+		where := "repo " + owner + "/" + repo
+		if rootSubpath != "" {
+			where = "subpath " + rootSubpath
+		}
+		fmt.Fprintf(out, "discovered %d skill(s) under %s\n", len(subpaths), where)
+	}
+
+	// Step 4: load existing vendored.json (empty if absent).
+	cur, err := loadVendoredFile(o.VendoredPath)
+	if err != nil {
+		return err
+	}
+
+	// Step 5: build one planned entry per discovered skill, parsing each
+	// upstream SKILL.md. A parse failure aborts the whole add (no partial
+	// write).
+	planned := make([]plannedEntry, 0, len(subpaths))
+	for _, subpath := range subpaths {
+		name := path.Base(subpath)
+		if singleTarget && o.Name != "" {
+			name = o.Name
+		}
+		internalRef, err := resolveInternalRef(o, cfg, name)
 		if err != nil {
-			return fmt.Errorf("marshalling dry-run entry: %w", err)
+			return err
 		}
-		fmt.Fprintf(out, "would %s entry:\n%s\n", action, body)
+		v2Namespace, err := extractV2Namespace(internalRef)
+		if err != nil {
+			return err
+		}
+
+		verifyLabel := "SKILL.md"
+		if !singleTarget {
+			verifyLabel = subpath + "/SKILL.md"
+		}
+		fmt.Fprintf(out, "verifying %s\n", verifyLabel)
+		parsed, err := skill.Parse(filepath.Join(tmp, filepath.FromSlash(subpath)))
+		if err != nil {
+			return fmt.Errorf("reading upstream SKILL.md: %w", err)
+		}
+		fmt.Fprintf(out, "  upstream name: %s\n", parsed.Config.Name)
+		if parsed.Config.Version != "" {
+			fmt.Fprintf(out, "  upstream version: %s\n", parsed.Config.Version)
+		}
+		if parsed.Config.License != "" {
+			fmt.Fprintf(out, "  upstream license: %s\n", parsed.Config.License)
+		}
+
+		planned = append(planned, plannedEntry{
+			entry: catalog.VendoredEntry{
+				Name:        name,
+				Namespace:   v2Namespace,
+				Repo:        owner + "/" + repo,
+				Subpath:     subpath,
+				Commit:      commit,
+				InternalRef: internalRef,
+			},
+			overwrites: vendoredHasEntry(cur, v2Namespace, name),
+		})
+	}
+
+	// Step 6: --dry-run short-circuit — print the would-be entries, write
+	// nothing. Dry-run is exempt from the overwrite prompt.
+	if o.DryRun {
+		return printDryRun(out, planned, singleTarget)
+	}
+
+	// Step 7: per-skill overwrite confirmation. Declined skills are dropped;
+	// the rest proceed.
+	accepted, err := decideOverwrites(out, in, o, planned)
+	if err != nil {
+		return err
+	}
+	if len(accepted) == 0 {
+		fmt.Fprintln(out, "aborted; vendored.json unchanged")
 		return nil
 	}
 
-	// Step 10: upsert + atomic write.
-	next, _ := catalog.UpsertVendored(cur, entry)
+	// Step 8: upsert every accepted entry, then one atomic write.
+	next := cur
+	for _, p := range accepted {
+		next, _ = catalog.UpsertVendored(next, p.entry)
+	}
 	if err := catalog.WriteVendoredAtomic(o.VendoredPath, next); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "catalog add: wrote entry %q to %s\n", name, o.VendoredPath)
+	if len(accepted) == 1 {
+		fmt.Fprintf(out, "catalog add: wrote entry %q to %s\n", accepted[0].entry.Name, o.VendoredPath)
+	} else {
+		fmt.Fprintf(out, "catalog add: wrote %d entries to %s\n", len(accepted), o.VendoredPath)
+	}
 	return nil
 }
 
-// confirmOverwrite implements the overwrite-confirmation UX. It returns
-// (proceed, error). Non-interactive contexts (--plain, or the --yes
-// override) never prompt: --yes proceeds, --plain without --yes is a
-// non-zero error naming the conflict. Otherwise it prints the prompt and
-// reads a single line from in, proceeding only on an explicit y/yes.
-func confirmOverwrite(out io.Writer, in io.Reader, o addOpts, namespace, name string) (bool, error) {
-	if o.Yes {
-		return true, nil
+// resolveCommit turns a user ref into an immutable commit SHA. An empty
+// version means a bare-repo input with no ref: resolve the default-branch
+// HEAD instead. Otherwise resolve the tag/branch/SHA. Either way the row is
+// pinned to the resolved commit, so a mutable ref (branch, default HEAD) is
+// fine — only the SHA is persisted.
+func resolveCommit(ctx context.Context, out io.Writer, res resolver, owner, repo, version string) (commit string, err error) {
+	slug := owner + "/" + repo
+	if version == "" {
+		fmt.Fprintf(out, "resolving %s@HEAD (default branch)\n", slug)
+		commit, err = res.ResolveHEAD(ctx, slug)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(out, "  → commit %s\n", commit)
+		return commit, nil
 	}
-	if o.Plain {
-		return false, fmt.Errorf("entry %s/%s already exists in vendored.json; pass -y/--yes to overwrite in non-interactive mode", namespace, name)
+	fmt.Fprintf(out, "resolving %s@%s\n", slug, version)
+	commit, _, err = res.ResolveRef(ctx, slug, version)
+	if err != nil {
+		return "", err
 	}
-	fmt.Fprintf(out, "entry %s/%s already exists in vendored.json; overwrite? [y/N] ", namespace, name)
-	line, _ := bufio.NewReader(in).ReadString('\n')
-	ans := strings.ToLower(strings.TrimSpace(line))
-	return ans == "y" || ans == "yes", nil
+	fmt.Fprintf(out, "  → commit %s\n", commit)
+	return commit, nil
+}
+
+// printDryRun reports the would-be entries without writing. The single-skill
+// case keeps the historical "would add entry:" wording; discovery mode lists
+// each entry with its name and per-skill action.
+func printDryRun(out io.Writer, planned []plannedEntry, singleTarget bool) error {
+	action := func(p plannedEntry) string {
+		if p.overwrites {
+			return "overwrite"
+		}
+		return "add"
+	}
+	if singleTarget {
+		body, err := json.MarshalIndent(planned[0].entry, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshalling dry-run entry: %w", err)
+		}
+		fmt.Fprintf(out, "would %s entry:\n%s\n", action(planned[0]), body)
+		return nil
+	}
+	fmt.Fprintf(out, "would write %d entries:\n", len(planned))
+	for _, p := range planned {
+		body, err := json.MarshalIndent(p.entry, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshalling dry-run entry: %w", err)
+		}
+		fmt.Fprintf(out, "would %s entry %q:\n%s\n", action(p), p.entry.Name, body)
+	}
+	return nil
+}
+
+// decideOverwrites filters planned entries by overwrite confirmation.
+// Non-overwriting entries always pass. For overwriting entries: --yes passes
+// all; --plain without --yes is a non-zero error naming every conflict (so a
+// scripted run never blocks); otherwise it prompts per skill and keeps only
+// the confirmed ones. The input reader is shared across prompts.
+func decideOverwrites(out io.Writer, in io.Reader, o addOpts, planned []plannedEntry) ([]plannedEntry, error) {
+	if !o.Yes && o.Plain {
+		var conflicts []string
+		for _, p := range planned {
+			if p.overwrites {
+				conflicts = append(conflicts, p.entry.Namespace+"/"+p.entry.Name)
+			}
+		}
+		if len(conflicts) > 0 {
+			return nil, fmt.Errorf("entry %s already exists in vendored.json; pass -y/--yes to overwrite in non-interactive mode", strings.Join(conflicts, ", "))
+		}
+	}
+
+	reader := bufio.NewReader(in)
+	accepted := make([]plannedEntry, 0, len(planned))
+	for _, p := range planned {
+		if !p.overwrites || o.Yes {
+			accepted = append(accepted, p)
+			continue
+		}
+		fmt.Fprintf(out, "entry %s/%s already exists in vendored.json; overwrite? [y/N] ", p.entry.Namespace, p.entry.Name)
+		line, _ := reader.ReadString('\n')
+		ans := strings.ToLower(strings.TrimSpace(line))
+		if ans == "y" || ans == "yes" {
+			accepted = append(accepted, p)
+		} else {
+			fmt.Fprintf(out, "  skipping %s/%s\n", p.entry.Namespace, p.entry.Name)
+		}
+	}
+	return accepted, nil
 }
 
 // loadVendoredFile reads vendored.json from path. A missing file bootstraps an

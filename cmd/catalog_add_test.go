@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,32 +32,61 @@ func (f fakeResolver) ResolveRef(_ context.Context, _, _ string) (string, bool, 
 	return f.commit, !f.mutable, nil
 }
 
-// fakeFetcher writes a SKILL.md (or doesn't) into the expected subpath
-// inside dst, simulating what scm.Fetch would do for a real fixture.
+func (f fakeResolver) ResolveHEAD(_ context.Context, _ string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.commit, nil
+}
+
+// fakeFetcher simulates scm.Checkout by writing SKILL.md files into a temp
+// checkout, then runs the real scm.DiscoverSkills over them — so discovery
+// is exercised for real while the network clone is faked. writeSkillMD
+// controls whether the primary subpath gets a SKILL.md; extraSkills lists
+// additional repo-relative skill directories to populate (for multi-skill
+// discovery tests).
 type fakeFetcher struct {
 	writeSkillMD bool
 	skillMDBody  string
 	err          error
+	extraSkills  []string
 }
 
-func (f fakeFetcher) Fetch(_ context.Context, ref scm.SourceRef, dst string) error {
+func (f fakeFetcher) Checkout(_ context.Context, ref scm.SourceRef, dst string) error {
 	if f.err != nil {
 		return f.err
 	}
-	subpathDir := filepath.Join(dst, filepath.FromSlash(ref.Subpath))
-	if err := os.MkdirAll(subpathDir, 0o755); err != nil {
-		return err
+	write := func(sub string) error {
+		dir := filepath.Join(dst, filepath.FromSlash(sub))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		body := f.skillMDBody
+		if body == "" {
+			body = "---\nname: fake-skill\nversion: 1.0.0\nlicense: Apache-2.0\n---\nfake body\n"
+		}
+		return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644)
 	}
-	if !f.writeSkillMD {
-		// Subpath exists but no SKILL.md — surface an error so the
-		// orchestrator's fetch step fails like the real scm.Fetch would.
-		return fmt.Errorf("fake fetch: subpath %q does not contain SKILL.md", ref.Subpath)
+	if f.writeSkillMD && ref.Subpath != "" {
+		if err := write(ref.Subpath); err != nil {
+			return err
+		}
+	} else if ref.Subpath != "" {
+		// Subpath exists but no SKILL.md — discovery will find nothing there.
+		if err := os.MkdirAll(filepath.Join(dst, filepath.FromSlash(ref.Subpath)), 0o755); err != nil {
+			return err
+		}
 	}
-	body := f.skillMDBody
-	if body == "" {
-		body = "---\nname: fake-skill\nversion: 1.0.0\nlicense: Apache-2.0\n---\nfake body\n"
+	for _, s := range f.extraSkills {
+		if err := write(s); err != nil {
+			return err
+		}
 	}
-	return os.WriteFile(filepath.Join(subpathDir, "SKILL.md"), []byte(body), 0o644)
+	return nil
+}
+
+func (fakeFetcher) Discover(dst, relRoot string) ([]string, error) {
+	return scm.DiscoverSkills(dst, relRoot)
 }
 
 func tempVendoredPath(t *testing.T) string {
@@ -111,7 +139,6 @@ func TestCatalogAdd_WritesVendored(t *testing.T) {
 		Namespace:   "liatrio",
 		Repo:        "anthropics/skills",
 		Subpath:     "skills/create-skill",
-		Version:     "v1.0.0",
 		Commit:      commit,
 		InternalRef: "ghcr.io/liatrio/skills/create-skill",
 	}
@@ -149,9 +176,9 @@ func TestCatalogAdd_WritesVendored_FlagForm(t *testing.T) {
 	}
 }
 
-func TestCatalogAdd_BranchInputRecordsSHAInVersion(t *testing.T) {
-	// A branch ref (immutable=false) must have its `version` overwritten with
-	// the resolved SHA so the vendored row never carries a mutable branch name.
+func TestCatalogAdd_BranchInputPinsResolvedSHA(t *testing.T) {
+	// A branch ref (immutable=false) must be pinned to the resolved commit SHA
+	// so the vendored row never carries a mutable branch name.
 	out := &bytes.Buffer{}
 	vendoredPath := tempVendoredPath(t)
 	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
@@ -166,9 +193,6 @@ func TestCatalogAdd_BranchInputRecordsSHAInVersion(t *testing.T) {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 	got := loadVendoredFromDisk(t, vendoredPath).Skills[0]
-	if got.Version != commit {
-		t.Errorf("Version = %q, want %q (resolved SHA — branch name must not be persisted)", got.Version, commit)
-	}
 	if got.Commit != commit {
 		t.Errorf("Commit = %q, want %q", got.Commit, commit)
 	}
@@ -185,7 +209,7 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 		path := tempVendoredPath(t)
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
 			Name: "create-skill", Namespace: "liatrio", Repo: "anthropics/skills",
-			Subpath: "skills/create-skill", Version: "v0.9.0", Commit: oldCommit,
+			Subpath: "skills/create-skill", Commit: oldCommit,
 			InternalRef: "ghcr.io/liatrio/skills/create-skill",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
@@ -292,6 +316,328 @@ func TestCatalogAdd_DryRun(t *testing.T) {
 	// The resolved entry's coordinates should appear in the printed JSON.
 	if !strings.Contains(got, "create-skill") || !strings.Contains(got, "ghcr.io/liatrio/skills/create-skill") {
 		t.Errorf("dry-run output missing resolved entry fields; got:\n%s", got)
+	}
+}
+
+func TestCatalogAdd_MultiSkillDiscovery(t *testing.T) {
+	// A repo-root URL (no subpath) must discover every skill and write one
+	// entry per skill, sorted, each auto-named from its directory.
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	opts := addOpts{
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
+		Namespace:    "ghcr.io/liatrio/skills",
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: commit}
+	// Intentionally out of order to prove the output is sorted.
+	fet := fakeFetcher{extraSkills: []string{"skills/beta", "skills/alpha"}}
+
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+
+	v := loadVendoredFromDisk(t, vendoredPath)
+	if len(v.Skills) != 2 {
+		t.Fatalf("len(skills) = %d, want 2; entries=%+v", len(v.Skills), v.Skills)
+	}
+	if v.Skills[0].Name != "alpha" || v.Skills[1].Name != "beta" {
+		t.Errorf("entries not sorted by name: got %q, %q", v.Skills[0].Name, v.Skills[1].Name)
+	}
+	for _, e := range v.Skills {
+		if e.Repo != "anthropics/skills" || e.Commit != commit {
+			t.Errorf("entry %q has wrong coordinates: %+v", e.Name, e)
+		}
+		if e.Namespace != "liatrio" {
+			t.Errorf("entry %q namespace = %q, want liatrio", e.Name, e.Namespace)
+		}
+		if e.Subpath != "skills/"+e.Name {
+			t.Errorf("entry %q subpath = %q, want skills/%s", e.Name, e.Subpath, e.Name)
+		}
+		if e.InternalRef != "ghcr.io/liatrio/skills/"+e.Name {
+			t.Errorf("entry %q internal_ref = %q", e.Name, e.InternalRef)
+		}
+	}
+	if got := out.String(); !strings.Contains(got, "discovered 2 skill(s)") || !strings.Contains(got, "wrote 2 entries") {
+		t.Errorf("output missing multi-skill banners; got:\n%s", got)
+	}
+}
+
+func TestCatalogAdd_ContainerSubpathDiscovery(t *testing.T) {
+	// A subpath that is a container (not itself a skill) discovers the skills
+	// beneath it — this is discovery mode even with an explicit subpath.
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	opts := addOpts{
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills",
+		Namespace:    "ghcr.io/liatrio/skills",
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: commit}
+	fet := fakeFetcher{extraSkills: []string{"skills/one", "skills/two"}}
+
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+	v := loadVendoredFromDisk(t, vendoredPath)
+	if len(v.Skills) != 2 || v.Skills[0].Name != "one" || v.Skills[1].Name != "two" {
+		t.Errorf("container discovery wrong: %+v", v.Skills)
+	}
+	if !strings.Contains(out.String(), "discovered 2 skill(s) under subpath skills") {
+		t.Errorf("output should name the container subpath; got:\n%s", out.String())
+	}
+}
+
+func TestCatalogAdd_BareRepoResolvesDefaultBranch(t *testing.T) {
+	// A bare repo URL (no /tree/<ref>) resolves the default-branch HEAD and
+	// records the resolved SHA as the version (the branch is mutable).
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	opts := addOpts{
+		URL:          "https://github.com/vercel-labs/agent-skills",
+		Namespace:    "ghcr.io/liatrio/skills",
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: commit}
+	fet := fakeFetcher{extraSkills: []string{"skills/web"}}
+
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+		t.Fatalf("runCatalogAddWithDeps: %v", err)
+	}
+	v := loadVendoredFromDisk(t, vendoredPath)
+	if len(v.Skills) != 1 {
+		t.Fatalf("len(skills) = %d, want 1", len(v.Skills))
+	}
+	got := v.Skills[0]
+	if got.Repo != "vercel-labs/agent-skills" {
+		t.Errorf("repo = %q, want vercel-labs/agent-skills", got.Repo)
+	}
+	if got.Commit != commit {
+		t.Errorf("commit = %q, want resolved SHA %q (default branch is mutable)", got.Commit, commit)
+	}
+	if !strings.Contains(out.String(), "resolving vercel-labs/agent-skills@HEAD") {
+		t.Errorf("output should announce default-branch resolution; got:\n%s", out.String())
+	}
+}
+
+func TestCatalogAdd_NameAndInternalRefRejectedInMultiMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		o    addOpts
+	}{
+		{"name set", addOpts{Name: "custom"}},
+		{"internal-ref set", addOpts{InternalRef: "ghcr.io/x/skills/custom"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := &bytes.Buffer{}
+			vendoredPath := tempVendoredPath(t)
+			o := tc.o
+			o.URL = "https://github.com/anthropics/skills/tree/v1.0.0"
+			o.Namespace = "ghcr.io/liatrio/skills"
+			o.VendoredPath = vendoredPath
+			res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+			fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
+
+			err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fet)
+			if err == nil {
+				t.Fatal("expected error when --name/--internal-ref used with multiple discovered skills")
+			}
+			if !strings.Contains(err.Error(), "single skill") {
+				t.Errorf("error %q should explain the single-skill restriction", err.Error())
+			}
+			if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
+				t.Errorf("vendored.json should not be written on rejection")
+			}
+		})
+	}
+}
+
+func TestCatalogAdd_MultiPerSkillOverwritePrompt(t *testing.T) {
+	const oldCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const newCommit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	// seed writes a vendored.json that already pins liatrio/alpha at oldCommit
+	// (beta is new). Discovery returns alpha + beta, so only alpha prompts.
+	seed := func(t *testing.T) string {
+		t.Helper()
+		path := tempVendoredPath(t)
+		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
+			Name: "alpha", Namespace: "liatrio", Repo: "anthropics/skills",
+			Subpath: "skills/alpha", Commit: oldCommit,
+			InternalRef: "ghcr.io/liatrio/skills/alpha",
+		}}}
+		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return path
+	}
+
+	mkOpts := func(path string) addOpts {
+		return addOpts{
+			URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
+			Namespace:    "ghcr.io/liatrio/skills",
+			VendoredPath: path,
+		}
+	}
+	res := fakeResolver{commit: newCommit}
+	fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
+
+	t.Run("declining alpha keeps it but still adds beta", func(t *testing.T) {
+		path := seed(t)
+		out := &bytes.Buffer{}
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("n\n"), mkOpts(path), configAccessor{}, res, fet); err != nil {
+			t.Fatalf("runCatalogAddWithDeps: %v", err)
+		}
+		v := loadVendoredFromDisk(t, path)
+		byName := map[string]catalog.VendoredEntry{}
+		for _, e := range v.Skills {
+			byName[e.Name] = e
+		}
+		if byName["alpha"].Commit != oldCommit {
+			t.Errorf("alpha overwritten despite 'n': %q", byName["alpha"].Commit)
+		}
+		if byName["beta"].Commit != newCommit {
+			t.Errorf("beta (new, no prompt) not added: %+v", byName["beta"])
+		}
+	})
+
+	t.Run("confirming alpha overwrites it", func(t *testing.T) {
+		path := seed(t)
+		out := &bytes.Buffer{}
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("y\n"), mkOpts(path), configAccessor{}, res, fet); err != nil {
+			t.Fatalf("runCatalogAddWithDeps: %v", err)
+		}
+		v := loadVendoredFromDisk(t, path)
+		for _, e := range v.Skills {
+			if e.Commit != newCommit {
+				t.Errorf("entry %q = %q, want %q", e.Name, e.Commit, newCommit)
+			}
+		}
+	})
+}
+
+func TestCatalogAdd_MultiPlainOverwrite(t *testing.T) {
+	const oldCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const newCommit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+
+	seed := func(t *testing.T) string {
+		t.Helper()
+		path := tempVendoredPath(t)
+		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
+			Name: "alpha", Namespace: "liatrio", Repo: "anthropics/skills",
+			Subpath: "skills/alpha", Commit: oldCommit,
+			InternalRef: "ghcr.io/liatrio/skills/alpha",
+		}}}
+		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return path
+	}
+	res := fakeResolver{commit: newCommit}
+	fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
+
+	t.Run("--plain without -y errors and lists the conflict", func(t *testing.T) {
+		path := seed(t)
+		out := &bytes.Buffer{}
+		o := addOpts{URL: "https://github.com/anthropics/skills/tree/v1.0.0", Namespace: "ghcr.io/liatrio/skills", VendoredPath: path, Plain: true}
+		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fet)
+		if err == nil {
+			t.Fatal("--plain overwrite without -y should error")
+		}
+		if !strings.Contains(err.Error(), "-y") || !strings.Contains(err.Error(), "liatrio/alpha") {
+			t.Errorf("error %q should name the conflict and -y", err.Error())
+		}
+		if got := loadVendoredFromDisk(t, path).Skills[0].Commit; got != oldCommit {
+			t.Errorf("alpha overwritten under --plain without -y: %q", got)
+		}
+	})
+
+	t.Run("--plain with -y overwrites all", func(t *testing.T) {
+		path := seed(t)
+		out := &bytes.Buffer{}
+		o := addOpts{URL: "https://github.com/anthropics/skills/tree/v1.0.0", Namespace: "ghcr.io/liatrio/skills", VendoredPath: path, Plain: true, Yes: true}
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fet); err != nil {
+			t.Fatalf("--plain -y errored: %v", err)
+		}
+		for _, e := range loadVendoredFromDisk(t, path).Skills {
+			if e.Commit != newCommit {
+				t.Errorf("entry %q not overwritten under --plain -y: %q", e.Name, e.Commit)
+			}
+		}
+	})
+}
+
+func TestCatalogAdd_MultiDryRun(t *testing.T) {
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+	opts := addOpts{
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
+		Namespace:    "ghcr.io/liatrio/skills",
+		VendoredPath: vendoredPath,
+		DryRun:       true,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
+
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+		t.Fatalf("multi dry run: %v", err)
+	}
+	if _, err := os.Stat(vendoredPath); !os.IsNotExist(err) {
+		t.Errorf("vendored.json should not exist after dry run")
+	}
+	got := out.String()
+	if !strings.Contains(got, "would write 2 entries") || !strings.Contains(got, "alpha") || !strings.Contains(got, "beta") {
+		t.Errorf("dry-run output missing entries; got:\n%s", got)
+	}
+}
+
+// partialBadFetcher writes one valid skill and one with invalid frontmatter,
+// so a parse failure on the second must abort the whole add.
+type partialBadFetcher struct{}
+
+func (partialBadFetcher) Checkout(_ context.Context, _ scm.SourceRef, dst string) error {
+	good := filepath.Join(dst, "skills", "good")
+	if err := os.MkdirAll(good, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(good, "SKILL.md"), []byte("---\nname: good\nversion: 1.0.0\nlicense: Apache-2.0\n---\nok\n"), 0o644); err != nil {
+		return err
+	}
+	bad := filepath.Join(dst, "skills", "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(bad, "SKILL.md"), []byte("no frontmatter\n"), 0o644)
+}
+
+func (partialBadFetcher) Discover(dst, relRoot string) ([]string, error) {
+	return scm.DiscoverSkills(dst, relRoot)
+}
+
+func TestCatalogAdd_ParseFailureAbortsWholeAdd(t *testing.T) {
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+	opts := addOpts{
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
+		Namespace:    "ghcr.io/liatrio/skills",
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, partialBadFetcher{})
+	if err == nil {
+		t.Fatal("expected parse failure to abort the add")
+	}
+	if !strings.Contains(err.Error(), "reading upstream SKILL.md") {
+		t.Errorf("error %q lacks parse context", err.Error())
+	}
+	if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
+		t.Errorf("vendored.json must not be written when any skill fails to parse")
 	}
 }
 
@@ -565,6 +911,11 @@ func (r *countingResolver) ResolveRef(_ context.Context, _, _ string) (string, b
 	return r.commit, true, nil
 }
 
+func (r *countingResolver) ResolveHEAD(_ context.Context, _ string) (string, error) {
+	r.calls++
+	return r.commit, nil
+}
+
 func TestRunCatalogAddWithDeps_RejectsSSRFRepoBeforeResolve(t *testing.T) {
 	bad := []string{
 		"http://169.254.169.254/latest/meta-data",
@@ -641,6 +992,11 @@ func (r *deadlineResolver) ResolveRef(ctx context.Context, _, _ string) (string,
 	return r.commit, true, nil
 }
 
+func (r *deadlineResolver) ResolveHEAD(ctx context.Context, _ string) (string, error) {
+	_, r.hadDeadline = ctx.Deadline()
+	return r.commit, nil
+}
+
 func TestRunCatalogAddWithDeps_TimeoutAppliesDeadline(t *testing.T) {
 	out := &bytes.Buffer{}
 	res := &deadlineResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
@@ -675,14 +1031,22 @@ func TestRunCatalogAddWithDeps_ZeroTimeoutNoDeadline(t *testing.T) {
 	}
 }
 
-// noSkillMDFetcher succeeds (returns nil from Fetch) and creates the subpath
-// directory but deliberately writes NO SKILL.md, so the orchestrator reaches
-// skill.Parse (step 5) and fails there — distinct from a Fetch-level error.
+// noSkillMDFetcher writes a SKILL.md with invalid frontmatter so discovery
+// finds the directory but skill.Parse fails — exercising the parse-failure
+// path, distinct from a checkout-level error or an empty directory.
 type noSkillMDFetcher struct{}
 
-func (noSkillMDFetcher) Fetch(_ context.Context, ref scm.SourceRef, dst string) error {
-	subpathDir := filepath.Join(dst, filepath.FromSlash(ref.Subpath))
-	return os.MkdirAll(subpathDir, 0o755)
+func (noSkillMDFetcher) Checkout(_ context.Context, ref scm.SourceRef, dst string) error {
+	dir := filepath.Join(dst, filepath.FromSlash(ref.Subpath))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	// Present but unparseable: no YAML frontmatter delimiters.
+	return os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("no frontmatter here\n"), 0o644)
+}
+
+func (noSkillMDFetcher) Discover(dst, relRoot string) ([]string, error) {
+	return scm.DiscoverSkills(dst, relRoot)
 }
 
 func TestRunCatalogAddWithDeps_FetchSucceedsButNoSKILLMD(t *testing.T) {
