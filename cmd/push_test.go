@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -205,7 +206,11 @@ func (p *pushTestRegistry) handleUpload(w http.ResponseWriter, r *http.Request) 
 		w.WriteHeader(http.StatusAccepted)
 	case http.MethodPut:
 		dig := r.URL.Query().Get("digest")
-		body := readAllBody(r)
+		body, err := readAllBody(r)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if got := digest.FromBytes(body).String(); dig != "" && got != dig {
 			w.WriteHeader(http.StatusBadRequest)
 			return
@@ -242,7 +247,11 @@ func (p *pushTestRegistry) handleManifest(w http.ResponseWriter, r *http.Request
 	ref := path[strings.Index(path, "/manifests/")+len("/manifests/"):]
 	switch r.Method {
 	case http.MethodPut:
-		body := readAllBody(r)
+		body, err := readAllBody(r)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		dig := digest.FromBytes(body).String()
 		p.mu.Lock()
 		p.manifests[dig] = body
@@ -275,15 +284,10 @@ func (p *pushTestRegistry) handleManifest(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func readAllBody(r *http.Request) []byte {
-	buf := make([]byte, 0, r.ContentLength)
-	tmp := make([]byte, 32*1024)
-	for {
-		n, err := r.Body.Read(tmp)
-		buf = append(buf, tmp[:n]...)
-		if err != nil {
-			break
-		}
+func readAllBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading request body: %w", err)
 	}
-	return buf
+	return body, nil
 }
