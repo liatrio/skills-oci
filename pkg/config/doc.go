@@ -1,5 +1,5 @@
 // Package config loads the project-level .skills-oci.yaml that lives in
-// the consumer repository alongside catalog.json. Settings are optional;
+// the consumer repository alongside vendored.json. Settings are optional;
 // absent file produces a zero-value Config that the caller layers
 // flags and env vars on top of via its precedence chain.
 //
