@@ -86,6 +86,26 @@ func TestDiscoverSkills_TargetIsItselfASkill(t *testing.T) {
 	}
 }
 
+func TestDiscoverSkills_RejectsRootLevelSkill(t *testing.T) {
+	// A SKILL.md at the very root of the scanned tree (relRoot == "") has no
+	// directory name to derive a skill name from (path.Base would be "."), and
+	// recording it would prune every genuine nested skill. Reject it with a
+	// clear error instead.
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{
+		"SKILL.md":              skillMD,
+		"skills/alpha/SKILL.md": skillMD,
+	})
+
+	_, err := DiscoverSkills(root, "")
+	if err == nil {
+		t.Fatal("DiscoverSkills accepted a root-level SKILL.md, want error")
+	}
+	if !strings.Contains(err.Error(), "root") {
+		t.Errorf("error %q should explain the root-level SKILL.md problem", err.Error())
+	}
+}
+
 func TestDiscoverSkills_NoneFound(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{

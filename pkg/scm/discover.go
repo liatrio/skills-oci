@@ -61,6 +61,12 @@ func DiscoverSkills(dst, relRoot string) ([]string, error) {
 		if err != nil {
 			return err
 		}
+		if rel == "." {
+			// A SKILL.md at the checkout root has no directory name to derive a
+			// skill name from, and recording it would prune every genuine nested
+			// skill. Reject it: point at a specific subpath instead.
+			return fmt.Errorf("discover: SKILL.md at the repository root is not a vendorable skill; specify a subpath")
+		}
 		found = append(found, filepath.ToSlash(rel))
 		return filepath.SkipDir // prune descendants of a discovered skill
 	})
