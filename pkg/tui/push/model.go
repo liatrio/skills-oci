@@ -32,24 +32,28 @@ type pushErrMsg struct{ err error }
 
 // Model is the Bubble Tea model for the push workflow.
 type Model struct {
-	phase     phase
-	spinner   spinner.Model
-	ref       string
-	skillDir  string
-	plainHTTP bool
-	config    *skill.SkillConfig
-	result    *oci.PushResult
-	err       error
+	phase       phase
+	spinner     spinner.Model
+	ref         string
+	skillDir    string
+	plainHTTP   bool
+	annotations map[string]string
+	config      *skill.SkillConfig
+	result      *oci.PushResult
+	err         error
 }
 
-// NewModel creates a new push TUI model.
-func NewModel(ref, skillDir string, plainHTTP bool) Model {
+// NewModel creates a new push TUI model. annotations are caller-supplied
+// manifest annotations (e.g. provenance) threaded through to oci.Push; a nil
+// map is a no-op.
+func NewModel(ref, skillDir string, plainHTTP bool, annotations map[string]string) Model {
 	return Model{
-		phase:     phaseValidating,
-		spinner:   components.NewSpinner(),
-		ref:       ref,
-		skillDir:  skillDir,
-		plainHTTP: plainHTTP,
+		phase:       phaseValidating,
+		spinner:     components.NewSpinner(),
+		ref:         ref,
+		skillDir:    skillDir,
+		plainHTTP:   plainHTTP,
+		annotations: annotations,
 	}
 }
 
@@ -183,10 +187,11 @@ func (m Model) runPush() tea.Cmd {
 		// Phase transitions happen based on the OnStatus callback.
 
 		result, err := oci.Push(ctx, oci.PushOptions{
-			Reference: m.ref,
-			SkillDir:  m.skillDir,
-			PlainHTTP: m.plainHTTP,
-			OnStatus:  func(phase string) {},
+			Reference:   m.ref,
+			SkillDir:    m.skillDir,
+			PlainHTTP:   m.plainHTTP,
+			Annotations: m.annotations,
+			OnStatus:    func(phase string) {},
 		})
 		if err != nil {
 			return pushErrMsg{err: err}

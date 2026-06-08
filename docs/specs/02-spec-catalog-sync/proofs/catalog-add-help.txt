@@ -1,0 +1,37 @@
+Resolves an upstream GitHub URL (or component flags) to an immutable commit SHA, verifies the upstream subpath contains SKILL.md, and upserts the source-pin entry into vendored.json. Never contacts the destination registry.
+
+Usage:
+  skills-oci catalog add [URL] [flags]
+
+Examples:
+  # URL form (tag)
+  skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill
+
+  # URL form (branch) — the resolver looks up the branch's head commit and records that SHA as the entry's version
+  skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator
+
+  # Flag form
+  skills-oci catalog add --repo anthropics/skills --subpath skills/create-skill --version v1.0.0
+
+  # Overwrite an existing entry non-interactively (CI / --plain)
+  skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0/skills/create-skill
+
+  # Dry run prints the resolved entry without writing vendored.json
+  skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill --dry-run
+
+Flags:
+      --dry-run               Print the would-be entry and exit without writing vendored.json
+  -h, --help                  help for add
+      --internal-ref string   Destination OCI ref without tag (overrides --namespace derivation)
+      --name string           Local entry name (default: last segment of the upstream subpath, whether from the URL or --subpath)
+      --namespace string      Destination namespace prefix; combined with --name to derive --internal-ref
+      --repo string           Upstream <owner>/<repo> slug (mutually exclusive with positional URL)
+      --subpath string        Path within the upstream repo to the skill directory
+      --timeout duration      Maximum time for the network-bound resolve + fetch steps (default 1m0s)
+      --vendored string       Path to vendored.json (default "vendored.json")
+      --version string        Upstream tag, branch, or 40-hex commit SHA (branches are resolved to the head commit and recorded as a SHA)
+  -y, --yes                   Overwrite an existing entry without prompting (required to overwrite in non-interactive/--plain mode)
+
+Global Flags:
+      --plain        Disable interactive TUI (plain text output)
+      --plain-http   Use plain HTTP instead of HTTPS for registry connections

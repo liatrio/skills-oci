@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/liatrio/skills-oci/pkg/skill"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/liatrio/skills-oci/pkg/skill"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content/memory"
 	"oras.land/oras-go/v2/registry/remote"
@@ -21,6 +21,13 @@ type PushOptions struct {
 	Tag       string // e.g., "1.0.0"
 	SkillDir  string // path to skill directory
 	PlainHTTP bool   // use HTTP instead of HTTPS (for local registries)
+
+	// Annotations are caller-supplied manifest annotations merged over the
+	// built-in (SKILL.md-derived) set, with caller keys winning on collision.
+	// This lets callers carry provenance (e.g.
+	// org.opencontainers.image.source/.revision) that must never be silently
+	// dropped. A nil or empty map is a no-op. (Decision Q4-A.)
+	Annotations map[string]string
 
 	// OnStatus is called with status updates during the push workflow.
 	OnStatus func(phase string)
@@ -134,6 +141,12 @@ func Push(ctx context.Context, opts PushOptions) (*PushResult, error) {
 	}
 	if sd.Config.License != "" {
 		annotations["org.opencontainers.image.licenses"] = sd.Config.License
+	}
+
+	// Overlay caller-supplied annotations so caller keys override built-ins
+	// (decision Q4-A: provenance the caller sets must never be dropped).
+	for k, v := range opts.Annotations {
+		annotations[k] = v
 	}
 
 	// Pack manifest

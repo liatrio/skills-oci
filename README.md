@@ -198,7 +198,9 @@ This removes the skill from `skills.json`, `skills.lock.json`, and deletes the e
 
 ## Vendoring third-party skills (`catalog add`)
 
-`skills-oci catalog add` records a third-party skill in a `catalog.json` index. It resolves an upstream GitHub reference to an **immutable commit SHA**, verifies that the upstream subpath actually contains a `SKILL.md`, and appends an entry. It never contacts the destination registry.
+`skills-oci catalog add` records a third-party skill in a `vendored.json` desired-state file. It resolves an upstream GitHub reference to an **immutable commit SHA**, verifies that the upstream subpath actually contains a `SKILL.md`, and upserts an entry. It never contacts the destination registry.
+
+Re-adding a skill that is already listed **overwrites** its pin in place (matched by `(namespace, name)`). On an interactive terminal you are warned and prompted before the overwrite; in a non-interactive context (`--plain`, piped/no TTY) pass `-y`/`--yes` to confirm — otherwise the command exits non-zero without writing.
 
 ```bash
 # URL form (tag)
@@ -210,7 +212,10 @@ skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/ski
 # Flag form
 skills-oci catalog add --repo anthropics/skills --subpath skills/skill-creator --version v1.0.0 --namespace liatrio
 
-# Dry run prints the resolved entry without writing catalog.json
+# Overwrite an existing entry non-interactively (CI / --plain)
+skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0/skills/skill-creator --namespace liatrio
+
+# Dry run prints the resolved entry without writing vendored.json
 skills-oci catalog add <URL> --namespace liatrio --dry-run
 ```
 
@@ -220,13 +225,13 @@ The destination namespace is resolved by precedence: `--internal-ref` > `--names
 |------|-------------|
 | `--repo` | Upstream `<owner>/<repo>` slug (flag form; mutually exclusive with the positional URL) |
 | `--subpath` | Path within the upstream repo to the skill directory |
-| `--version` | Upstream tag, branch, or 40-hex commit SHA. Branches are resolved to the head commit and recorded as a SHA; the persisted `version` is allow-listed to **SemVer 2.0.0 (optional leading `v`) or a 40-hex SHA** |
-| `--name` | Local catalog entry name (default: last segment of the upstream subpath) |
+| `--version` | Upstream tag, branch, or 40-hex commit SHA. Branches are resolved to the head commit and recorded as a SHA |
+| `--name` | Local entry name (default: last segment of the upstream subpath) |
 | `--namespace` / `--internal-ref` | Destination namespace / fully-qualified OCI ref |
-| `--catalog` | Path to `catalog.json` (default `catalog.json`) |
-| `--detail-dir` | When set, also write a per-skill detail file at `<detail-dir>/<namespace>/<name>.json` |
+| `--vendored` | Path to `vendored.json` (default `vendored.json`) |
+| `-y`, `--yes` | Overwrite an existing entry without prompting (required to overwrite under `--plain` / non-interactive) |
 | `--timeout` | Maximum time for the network-bound resolve + fetch steps (default `60s`) |
-| `--dry-run` | Print the would-be entry and exit without writing |
+| `--dry-run` | Print the would-be entry (and whether it would add or overwrite) and exit without writing |
 
 ## Using with Claude Code (Hook Integration)
 
