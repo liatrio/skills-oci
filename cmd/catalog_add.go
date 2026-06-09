@@ -310,6 +310,7 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 				Subpath:     subpath,
 				Commit:      commit,
 				InternalRef: internalRef,
+				License:     parsed.Config.License,
 			},
 			overwrites: vendoredHasEntry(cur, v2Namespace, name),
 		})

@@ -204,6 +204,8 @@ This removes the skill from `skills.json`, `skills.lock.json`, and deletes the e
 
 **Accepted URL forms.** A directory at a ref (`.../tree/<ref>/<subpath>`), a repo root at a ref (`.../tree/<ref>`), or a bare repo (`https://github.com/<owner>/<repo>`). For a bare repo the **default branch** is resolved to its head commit and that SHA is recorded as the entry's commit pin.
 
+**Recorded fields.** Each entry pins `name`, `namespace`, `repo`, `subpath`, `commit` (the resolved 40-hex SHA), and `internal_ref` (the destination OCI ref). When the upstream `SKILL.md` declares a `license`, it is copied verbatim into an optional `license` field; entries whose upstream skill declares no license omit it.
+
 Re-adding a skill that is already listed **overwrites** its pin in place (matched by `(namespace, name)`). On an interactive terminal you are prompted per skill before each overwrite; new skills are added without prompting. In a non-interactive context (`--plain`, piped/no TTY) an overwrite requires `-y`/`--yes` — otherwise the command exits non-zero, naming the conflicts, without writing.
 
 ```bash

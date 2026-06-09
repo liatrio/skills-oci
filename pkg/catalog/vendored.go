@@ -26,7 +26,10 @@ type Vendored struct {
 
 // VendoredEntry is one source-pin in vendored.json. `commit` is always the
 // resolved 40-character lowercase hex SHA — the immutability property the
-// consuming `core` reader relies on.
+// consuming `core` reader relies on. `license` is the SPDX-style license
+// string copied from the upstream SKILL.md frontmatter; it is optional
+// (omitted when the upstream skill declares none) and informational only —
+// validation does not require it.
 type VendoredEntry struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
@@ -34,6 +37,7 @@ type VendoredEntry struct {
 	Subpath     string `json:"subpath"`
 	Commit      string `json:"commit"`
 	InternalRef string `json:"internal_ref"`
+	License     string `json:"license,omitempty"`
 }
 
 // LoadVendored parses vendored.json bytes into a Vendored value. Like Load, it

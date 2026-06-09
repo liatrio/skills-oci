@@ -141,6 +141,7 @@ func TestCatalogAdd_WritesVendored(t *testing.T) {
 		Subpath:     "skills/create-skill",
 		Commit:      commit,
 		InternalRef: "ghcr.io/liatrio/skills/create-skill",
+		License:     "Apache-2.0", // from the fakeFetcher's default SKILL.md
 	}
 	if got != want {
 		t.Errorf("entry = %+v, want %+v", got, want)
