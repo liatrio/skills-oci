@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 )
 
@@ -22,8 +25,8 @@ type Vendored struct {
 }
 
 // VendoredEntry is one source-pin in vendored.json. `commit` is always the
-// resolved 40-character lowercase hex SHA — the immutability property the sync
-// workflow relies on.
+// resolved 40-character lowercase hex SHA — the immutability property the
+// consuming `core` reader relies on.
 type VendoredEntry struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace"`
@@ -50,8 +53,8 @@ func LoadVendored(data []byte) (Vendored, error) {
 
 // ValidateVendored enforces the vendored.json contract: schemaVersion must be
 // exactly 1, every entry must have all six fields populated, and every
-// `commit` must be a 40-character lowercase hex Git SHA (reusing commitPattern,
-// the same guard the source-pin catalog uses). An empty skills list is valid.
+// `commit` must be a 40-character lowercase hex Git SHA (commitPattern). An
+// empty skills list is valid.
 func ValidateVendored(v Vendored) error {
 	if v.SchemaVersion != vendoredSchemaVersion {
 		return fmt.Errorf("schemaVersion: want %d, got %d", vendoredSchemaVersion, v.SchemaVersion)
@@ -111,10 +114,10 @@ func UpsertVendored(v Vendored, e VendoredEntry) (Vendored, bool) {
 }
 
 // WriteVendoredAtomic validates v, marshals it with stable key order, and
-// atomically writes it via temp-file + rename (mirroring WriteCatalogAtomic).
-// A failed write or invalid content leaves no partial file on disk. Stable
-// entry order is the caller's responsibility (UpsertVendored guarantees it);
-// the writer preserves whatever order skills[] is in.
+// atomically writes it via temp-file + rename. A failed write or invalid
+// content leaves no partial file on disk. Stable entry order is the caller's
+// responsibility (UpsertVendored guarantees it); the writer preserves whatever
+// order skills[] is in.
 func WriteVendoredAtomic(path string, v Vendored) error {
 	if v.SchemaVersion == 0 {
 		v.SchemaVersion = vendoredSchemaVersion
@@ -128,4 +131,38 @@ func WriteVendoredAtomic(path string, v Vendored) error {
 	}
 	body = append(body, '\n')
 	return writeAtomic(path, body)
+}
+
+// commitPattern enforces the SHA-only constraint vendored.json relies on: a
+// full 40-character lowercase hexadecimal Git SHA-1 commit. Branches and
+// mutable tags are rejected at validation time so every row pins to an
+// immutable commit.
+var commitPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
+
+// writeAtomic writes body to a temp file in the same directory as path and
+// renames it into place. The temp file is cleaned up on any error so a failed
+// write leaves no partial state.
+func writeAtomic(path string, body []byte) error {
+	dir := filepath.Dir(path)
+	base := filepath.Base(path)
+	tmp, err := os.CreateTemp(dir, base+".tmp.*")
+	if err != nil {
+		return fmt.Errorf("creating temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("closing temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		cleanup()
+		return fmt.Errorf("renaming temp file into place: %w", err)
+	}
+	return nil
 }

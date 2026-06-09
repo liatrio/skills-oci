@@ -145,14 +145,6 @@ func TestCatalogAdd_WritesVendored(t *testing.T) {
 	if got != want {
 		t.Errorf("entry = %+v, want %+v", got, want)
 	}
-
-	// Non-goal: no catalog.json or detail directory written next to vendored.json.
-	if _, err := os.Stat(filepath.Join(dir, "catalog.json")); !os.IsNotExist(err) {
-		t.Errorf("catalog.json should not be written (stat err=%v)", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "skills")); !os.IsNotExist(err) {
-		t.Errorf("detail skills/ dir should not be written (stat err=%v)", err)
-	}
 }
 
 func TestCatalogAdd_WritesVendored_FlagForm(t *testing.T) {

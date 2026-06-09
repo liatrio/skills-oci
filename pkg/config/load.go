@@ -18,10 +18,9 @@ var knownTopLevelKeys = map[string]struct{}{
 // Load parses .skills-oci.yaml bytes into a Config. Empty input returns
 // the zero value (no error). Unknown top-level keys are logged to stderr
 // and otherwise ignored so the contract can grow additively. Type
-// mismatches on known keys (e.g. `concurrency: "four"`) reject with a
-// field-named error. `catalog.concurrency`, when explicitly set, must be
-// a positive int; zero or negative values reject. Absent values leave
-// the zero default in place so the caller's precedence chain runs.
+// mismatches on known keys (e.g. `default_namespace: 3`) reject with a
+// field-named error. Absent values leave the zero default in place so the
+// caller's precedence chain runs.
 func Load(data []byte) (Config, error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		return Config{}, nil
@@ -64,20 +63,6 @@ func validateRaw(raw map[string]any) error {
 	if v, present := catRaw["default_namespace"]; present {
 		if _, isString := v.(string); !isString {
 			return fmt.Errorf("catalog.default_namespace must be a string, got %T", v)
-		}
-	}
-	if v, present := catRaw["allow_missing_license"]; present {
-		if _, isBool := v.(bool); !isBool {
-			return fmt.Errorf("catalog.allow_missing_license must be a bool, got %T", v)
-		}
-	}
-	if v, present := catRaw["concurrency"]; present {
-		n, isInt := v.(int)
-		if !isInt {
-			return fmt.Errorf("catalog.concurrency must be an integer, got %T", v)
-		}
-		if n <= 0 {
-			return fmt.Errorf("catalog.concurrency must be positive, got %d", n)
 		}
 	}
 	return nil

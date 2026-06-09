@@ -17,12 +17,4 @@ type CatalogConfig struct {
 	// internal_ref when `catalog add` is invoked without --internal-ref.
 	// Format: <registry>/<path-prefix>, no tag.
 	DefaultNamespace string `yaml:"default_namespace"`
-
-	// AllowMissingLicense, when true, lets `catalog sync` push an entry
-	// whose upstream SKILL.md has no license field. Default false.
-	AllowMissingLicense bool `yaml:"allow_missing_license"`
-
-	// Concurrency is the bounded-parallel worker count for
-	// `catalog sync`. Default (when unset and no flag) is 4.
-	Concurrency int `yaml:"concurrency"`
 }

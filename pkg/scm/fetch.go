@@ -20,10 +20,10 @@ var remoteURLForFetch = func(owner, repo string) string {
 	return "https://github.com/" + owner + "/" + repo + ".git"
 }
 
-// ownerRepoPattern is the same shape pkg/catalog.Validate enforces on
-// the repo slug: a single owner segment and a single repo segment with
-// safe characters only. Enforced again here so callers that constructed
-// a SourceRef by hand cannot smuggle a URL through the Owner field.
+// ownerRepoPattern constrains each repo-slug segment to a single owner or
+// repo segment with safe characters only. Enforced here so callers that
+// constructed a SourceRef by hand cannot smuggle a URL through the Owner
+// field.
 var ownerRepoPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // Fetch shallow-clones the upstream Git repository identified by ref into

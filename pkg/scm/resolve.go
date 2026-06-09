@@ -13,7 +13,8 @@ import (
 )
 
 // shaPattern matches a 40-hex lowercase Git SHA-1 commit — the same shape
-// pkg/catalog.Validate enforces. SHA-256 git refs are not accepted in v1.
+// the vendored.json commit pin requires. SHA-256 git refs are not accepted
+// in v1.
 var shaPattern = regexp.MustCompile(`^[a-f0-9]{40}$`)
 
 // slugPattern matches a two-segment `<owner>/<repo>` slug with safe

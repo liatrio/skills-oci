@@ -12,8 +12,6 @@ func TestLoad_ValidYAML(t *testing.T) {
 	input := []byte(`
 catalog:
   default_namespace: ghcr.io/liatrio/skills
-  allow_missing_license: true
-  concurrency: 8
 `)
 
 	got, err := Load(input)
@@ -22,12 +20,6 @@ catalog:
 	}
 	if got.Catalog.DefaultNamespace != "ghcr.io/liatrio/skills" {
 		t.Errorf("DefaultNamespace = %q, want %q", got.Catalog.DefaultNamespace, "ghcr.io/liatrio/skills")
-	}
-	if !got.Catalog.AllowMissingLicense {
-		t.Error("AllowMissingLicense = false, want true")
-	}
-	if got.Catalog.Concurrency != 8 {
-		t.Errorf("Concurrency = %d, want 8", got.Catalog.Concurrency)
 	}
 }
 
@@ -49,8 +41,9 @@ func TestLoad_EmptyInputReturnsZeroValue(t *testing.T) {
 	}
 }
 
-func TestLoad_PartialKeysOK(t *testing.T) {
-	// Setting only one key inside catalog should leave the others at zero.
+func TestLoad_OmittedNamespaceDefaultsToZero(t *testing.T) {
+	// An empty catalog section should leave default_namespace at zero so the
+	// caller's precedence chain runs.
 	input := []byte(`
 catalog:
   default_namespace: ghcr.io/example
@@ -61,12 +54,6 @@ catalog:
 	}
 	if got.Catalog.DefaultNamespace != "ghcr.io/example" {
 		t.Errorf("DefaultNamespace = %q", got.Catalog.DefaultNamespace)
-	}
-	if got.Catalog.AllowMissingLicense {
-		t.Error("AllowMissingLicense should default to false")
-	}
-	if got.Catalog.Concurrency != 0 {
-		t.Errorf("Concurrency = %d, want 0 (caller applies default)", got.Catalog.Concurrency)
 	}
 }
 
@@ -126,19 +113,9 @@ func TestLoad_TypeMismatchRejects(t *testing.T) {
 		wantField string
 	}{
 		{
-			name:      "concurrency string",
-			input:     "catalog:\n  concurrency: \"four\"\n",
-			wantField: "concurrency",
-		},
-		{
 			name:      "default_namespace int",
 			input:     "catalog:\n  default_namespace: 123\n",
 			wantField: "default_namespace",
-		},
-		{
-			name:      "allow_missing_license string",
-			input:     "catalog:\n  allow_missing_license: \"yes\"\n",
-			wantField: "allow_missing_license",
 		},
 	}
 	for _, tc := range cases {
@@ -149,28 +126,6 @@ func TestLoad_TypeMismatchRejects(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantField) {
 				t.Errorf("error %q lacks %q context", err.Error(), tc.wantField)
-			}
-		})
-	}
-}
-
-func TestLoad_RejectsNegativeConcurrency(t *testing.T) {
-	cases := []struct {
-		name  string
-		value string
-	}{
-		{"zero", "0"},
-		{"negative", "-1"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			input := []byte("catalog:\n  concurrency: " + tc.value + "\n")
-			_, err := Load(input)
-			if err == nil {
-				t.Fatalf("Load accepted concurrency=%s, want error", tc.value)
-			}
-			if !strings.Contains(err.Error(), "concurrency") {
-				t.Errorf("error %q lacks 'concurrency' context", err.Error())
 			}
 		})
 	}

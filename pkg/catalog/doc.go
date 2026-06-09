@@ -1,6 +1,6 @@
-// Package catalog implements the skills-oci catalog vendoring data model.
-// It owns the v2 catalog.json and catalog-lock.json formats (schema_version
-// 2), the validator that enforces SHA-only commit refs, pure append/diff
-// helpers, and atomic file writers. IO is confined to narrow write helpers;
-// everything else is pure.
+// Package catalog implements the skills-oci vendoring data model. It owns
+// the vendored.json format (schemaVersion 1) — the desired-state list of
+// third-party skills vendored into a repo — along with its validator
+// (SHA-only commit pins), pure upsert/sort helpers, and an atomic file
+// writer. IO is confined to narrow write helpers; everything else is pure.
 package catalog

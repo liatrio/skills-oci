@@ -32,7 +32,7 @@ func newCatalogCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "catalog",
 		Short: "Vendor third-party skills into an internal OCI registry",
-		Long:  "Manage a declarative catalog (catalog.json) of third-party skills vendored from upstream Git repositories.",
+		Long:  "Manage a declarative catalog (vendored.json) of third-party skills vendored from upstream Git repositories.",
 		PersistentPreRunE: func(c *cobra.Command, _ []string) error {
 			cfg, err := loadProjectConfig()
 			if err != nil {
