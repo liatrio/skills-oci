@@ -472,14 +472,18 @@ func vendoredHasEntry(v catalog.Vendored, namespace, name string) bool {
 // extractV2Namespace pulls the single-segment v2 namespace out of an
 // internal_ref of the form `<registry>/<namespace>/skills/<name>` (the
 // `skills-oci` convention). The registry host is always the first
-// segment, the v2 namespace is always the second. Errors when the ref
-// has fewer than two path segments.
+// segment, the v2 namespace is always the second. The ref must be a
+// well-formed registry reference (`<registry>/<namespace>/<name>`, at
+// least three non-empty segments) — catalog.ValidateInternalRef is the
+// single source of that grammar, shared with the vendored.json contract
+// gate. Rejecting an under-qualified ref here (e.g. `liatrio/<name>` from
+// `--namespace liatrio`) fails the add fast instead of writing a row the
+// downstream catalog-sync build would reject.
 func extractV2Namespace(internalRef string) (string, error) {
-	parts := strings.Split(internalRef, "/")
-	if len(parts) < 2 || parts[1] == "" {
+	if err := catalog.ValidateInternalRef(internalRef); err != nil {
 		return "", fmt.Errorf("cannot derive v2 namespace from internal_ref %q (expected <registry>/<namespace>/skills/<name>)", internalRef)
 	}
-	return parts[1], nil
+	return strings.Split(internalRef, "/")[1], nil
 }
 
 // resolveUpstreamInputs picks values from either the positional URL or

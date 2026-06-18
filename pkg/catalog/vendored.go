@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // vendoredSchemaVersion is the only schemaVersion this package writes and
@@ -76,8 +77,33 @@ func ValidateVendored(v Vendored) error {
 		case e.InternalRef == "":
 			return fmt.Errorf("skills[%d].internal_ref: must not be empty", i)
 		}
+		if err := ValidateInternalRef(e.InternalRef); err != nil {
+			return fmt.Errorf("skills[%d].internal_ref: %w", i, err)
+		}
 		if !commitPattern.MatchString(e.Commit) {
 			return fmt.Errorf("skills[%d].commit: must be a 40-char lowercase hex SHA, got %q", i, e.Commit)
+		}
+	}
+	return nil
+}
+
+// ValidateInternalRef enforces the registry-reference grammar the consuming
+// `core` reader requires: an internal_ref must be "<registry>/<namespace>/<name>"
+// — at least three non-empty, slash-separated segments (everything between the
+// registry host and the final name segment is the namespace, so both flat
+// `ghcr.io/org/name` and nested `ghcr.io/org/skills/name` layouts pass). This is
+// the producer-side mirror of core/internal/registry.ParseRef; keep the two in
+// lockstep. Without it, an under-qualified namespace (e.g. `--namespace liatrio`
+// → `liatrio/<name>`) would be written here and only rejected downstream in the
+// catalog-sync build.
+func ValidateInternalRef(ref string) error {
+	parts := strings.Split(strings.TrimSpace(ref), "/")
+	if len(parts) < 3 {
+		return fmt.Errorf("must be <registry>/<namespace>/<name>, got %q", ref)
+	}
+	for _, p := range parts {
+		if p == "" {
+			return fmt.Errorf("has an empty path segment: %q", ref)
 		}
 	}
 	return nil

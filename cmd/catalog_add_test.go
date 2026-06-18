@@ -1104,8 +1104,11 @@ func TestExtractV2Namespace(t *testing.T) {
 		wantErr     bool
 	}{
 		{"valid four-segment ref", "ghcr.io/liatrio/skills/create-skill", "liatrio", false},
-		{"valid two-segment ref", "registry/namespace", "namespace", false},
+		{"valid three-segment ref", "ghcr.io/liatrio/create-skill", "liatrio", false},
+		{"two-segment ref errors (no name)", "registry/namespace", "", true},
+		{"missing registry host errors", "liatrio/ask-matt", "", true},
 		{"single segment errors", "singleword", "", true},
+		{"empty middle segment errors", "ghcr.io//create-skill", "", true},
 		{"empty second segment errors", "registry/", "", true},
 		{"empty string errors", "", "", true},
 	}
@@ -1128,5 +1131,32 @@ func TestExtractV2Namespace(t *testing.T) {
 				t.Errorf("extractV2Namespace(%q) = %q, want %q", tt.internalRef, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCatalogAdd_RejectsUnderQualifiedNamespace is the regression guard for the
+// incident where `--namespace liatrio` (the bare org, missing the registry
+// host) produced a two-segment internal_ref `liatrio/<name>`. The consumer's
+// registry parser requires <registry>/<namespace>/<name>, so such a ref breaks
+// the downstream catalog-sync build. The add must fail fast and write nothing.
+func TestCatalogAdd_RejectsUnderQualifiedNamespace(t *testing.T) {
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+
+	opts := addOpts{
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		Namespace:    "liatrio", // bare org, no registry host — would yield "liatrio/create-skill"
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+	if err == nil {
+		t.Fatal("runCatalogAddWithDeps accepted an under-qualified namespace")
+	}
+	if !strings.Contains(err.Error(), "internal_ref") && !strings.Contains(err.Error(), "<registry>/<namespace>") {
+		t.Errorf("error %q lacks internal_ref/format context", err.Error())
+	}
+	if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
+		t.Errorf("a rejected add must not write vendored.json (found file at %s)", vendoredPath)
 	}
 }
