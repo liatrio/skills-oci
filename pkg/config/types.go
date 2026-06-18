@@ -13,8 +13,10 @@ type Config struct {
 // --namespace flag (which overrides this config but not --internal-ref) >
 // this yaml config > the SKILLS_OCI_DEFAULT_NAMESPACE env var > error.
 type CatalogConfig struct {
-	// DefaultNamespace is the prefix used to derive an entry's
-	// internal_ref when `catalog add` is invoked without --internal-ref.
-	// Format: <registry>/<path-prefix>, no tag.
+	// DefaultNamespace is the base OCI namespace used to derive an entry's
+	// internal_ref when `catalog add` is invoked without --internal-ref. It is
+	// source-qualified per skill to <base>/<owner>/<repo>/<name>, so
+	// this value is just the registry-qualified prefix.
+	// Format: <registry>/<path-prefix>, no tag (e.g. ghcr.io/liatrio/skills).
 	DefaultNamespace string `yaml:"default_namespace"`
 }
