@@ -16,7 +16,7 @@ func validVendoredEntry() VendoredEntry {
 		Repo:        "liatrio-labs/skills",
 		Subpath:     "skills/manage-pull-requests",
 		Commit:      "0123456789abcdef0123456789abcdef01234567",
-		InternalRef: "liatrio-labs/manage-pull-requests",
+		InternalRef: "ghcr.io/liatrio-labs/manage-pull-requests",
 	}
 }
 
@@ -32,7 +32,7 @@ func TestLoadVendored_RoundTrip(t *testing.T) {
       "repo": "liatrio-labs/skills",
       "subpath": "skills/manage-pull-requests",
       "commit": "0123456789abcdef0123456789abcdef01234567",
-      "internal_ref": "liatrio-labs/manage-pull-requests"
+      "internal_ref": "ghcr.io/liatrio-labs/manage-pull-requests"
     }
   ]
 }`)
@@ -85,7 +85,7 @@ func TestVendored_LicenseRoundTrip(t *testing.T) {
       "repo": "liatrio-labs/skills",
       "subpath": "skills/manage-pull-requests",
       "commit": "0123456789abcdef0123456789abcdef01234567",
-      "internal_ref": "liatrio-labs/manage-pull-requests",
+      "internal_ref": "ghcr.io/liatrio-labs/manage-pull-requests",
       "license": "Apache-2.0"
     }
   ]
@@ -171,6 +171,11 @@ func TestValidateVendored(t *testing.T) {
 		{"missing subpath", missing(func(e *VendoredEntry) { e.Subpath = "" }), true},
 		{"missing commit", missing(func(e *VendoredEntry) { e.Commit = "" }), true},
 		{"missing internal_ref", missing(func(e *VendoredEntry) { e.InternalRef = "" }), true},
+		{"internal_ref missing registry host", missing(func(e *VendoredEntry) { e.InternalRef = "liatrio/manage-pull-requests" }), true},
+		{"internal_ref single segment", missing(func(e *VendoredEntry) { e.InternalRef = "manage-pull-requests" }), true},
+		{"internal_ref empty middle segment", missing(func(e *VendoredEntry) { e.InternalRef = "ghcr.io//manage-pull-requests" }), true},
+		{"internal_ref valid three-segment", missing(func(e *VendoredEntry) { e.InternalRef = "ghcr.io/liatrio/manage-pull-requests" }), false},
+		{"internal_ref valid nested four-segment", missing(func(e *VendoredEntry) { e.InternalRef = "ghcr.io/liatrio/skills/manage-pull-requests" }), false},
 		{"commit too short", missing(func(e *VendoredEntry) { e.Commit = "0123abc" }), true},
 		{"commit uppercase", missing(func(e *VendoredEntry) { e.Commit = strings.ToUpper(validVendoredEntry().Commit) }), true},
 		{"commit non-hex", missing(func(e *VendoredEntry) { e.Commit = "g123456789abcdef0123456789abcdef01234567" }), true},
@@ -191,9 +196,9 @@ func TestValidateVendored(t *testing.T) {
 func TestUpsertVendored(t *testing.T) {
 	t.Run("append new keeps deterministic order", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-			{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-b/zebra"},
+			{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-b/zebra"},
 		}}
-		add := VendoredEntry{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-a/alpha"}
+		add := VendoredEntry{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-a/alpha"}
 		got, replaced := UpsertVendored(base, add)
 		if replaced {
 			t.Errorf("replaced = true, want false for new entry")
@@ -259,8 +264,8 @@ func TestWriteVendoredAtomic(t *testing.T) {
 
 	// Unsorted input; the writer should persist in deterministic order.
 	v := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-		{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-b/zebra"},
-		{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns-a/alpha"},
+		{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-b/zebra"},
+		{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-a/alpha"},
 	}}
 	if err := WriteVendoredAtomic(path, v); err != nil {
 		t.Fatalf("WriteVendoredAtomic: %v", err)

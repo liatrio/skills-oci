@@ -276,13 +276,20 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 		if singleTarget && o.Name != "" {
 			name = o.Name
 		}
-		internalRef, err := resolveInternalRef(o, cfg, name)
+		internalRef, err := resolveInternalRef(o, cfg, owner, repo, name)
 		if err != nil {
 			return err
 		}
-		v2Namespace, err := extractV2Namespace(internalRef)
-		if err != nil {
-			return err
+		// Catalog identity is source-qualified: namespace = <owner>-<repo>
+		//. This source-qualifies the (namespace, name) key so two
+		// source repos shipping a skill with the same name no longer collide.
+		namespace := sourceNamespace(owner, repo)
+		// Residual-collision guard: distinct repos can normalize to the same
+		// namespace token (e.g. `a_b/c` and `a/b-c` → `a-b-c`). If the computed
+		// (namespace, name) already maps to a *different* internal_ref, fail
+		// rather than silently overwrite a different source.
+		if existing, ok := findVendoredEntry(cur, namespace, name); ok && existing.InternalRef != internalRef {
+			return fmt.Errorf("namespace collision: %s/%s already maps to internal_ref %q from a different source; refusing to overwrite it with %q", namespace, name, existing.InternalRef, internalRef)
 		}
 
 		verifyLabel := "SKILL.md"
@@ -305,14 +312,14 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 		planned = append(planned, plannedEntry{
 			entry: catalog.VendoredEntry{
 				Name:        name,
-				Namespace:   v2Namespace,
+				Namespace:   namespace,
 				Repo:        owner + "/" + repo,
 				Subpath:     subpath,
 				Commit:      commit,
 				InternalRef: internalRef,
 				License:     parsed.Config.License,
 			},
-			overwrites: vendoredHasEntry(cur, v2Namespace, name),
+			overwrites: vendoredHasEntry(cur, namespace, name),
 		})
 	}
 
@@ -458,28 +465,50 @@ func loadVendoredFile(path string) (catalog.Vendored, error) {
 	return v, nil
 }
 
-// vendoredHasEntry reports whether v already contains an entry keyed by
-// (namespace, name) — the same identity UpsertVendored uses.
-func vendoredHasEntry(v catalog.Vendored, namespace, name string) bool {
+// findVendoredEntry returns the existing entry keyed by (namespace, name) —
+// the same identity UpsertVendored uses — and whether one was found.
+func findVendoredEntry(v catalog.Vendored, namespace, name string) (catalog.VendoredEntry, bool) {
 	for _, e := range v.Skills {
 		if e.Namespace == namespace && e.Name == name {
-			return true
+			return e, true
 		}
 	}
-	return false
+	return catalog.VendoredEntry{}, false
 }
 
-// extractV2Namespace pulls the single-segment v2 namespace out of an
-// internal_ref of the form `<registry>/<namespace>/skills/<name>` (the
-// `skills-oci` convention). The registry host is always the first
-// segment, the v2 namespace is always the second. Errors when the ref
-// has fewer than two path segments.
-func extractV2Namespace(internalRef string) (string, error) {
-	parts := strings.Split(internalRef, "/")
-	if len(parts) < 2 || parts[1] == "" {
-		return "", fmt.Errorf("cannot derive v2 namespace from internal_ref %q (expected <registry>/<namespace>/skills/<name>)", internalRef)
+// vendoredHasEntry reports whether v already contains an entry keyed by
+// (namespace, name).
+func vendoredHasEntry(v catalog.Vendored, namespace, name string) bool {
+	_, ok := findVendoredEntry(v, namespace, name)
+	return ok
+}
+
+// sourceNamespace derives the catalog namespace for a vendored skill from its
+// source repository as `<owner>-<repo>`. Each segment is normalized
+// to the catalog identifier grammar so the result is a single kebab token
+// matching `^[a-z0-9]+(?:-[a-z0-9]+)*$` (the contract's namespace regex) and is
+// slash-free (so it never trips the consumer's first-`/` cache-key split).
+// Source-qualifying the namespace makes the (namespace, name) catalog identity
+// collision-safe across source repos.
+func sourceNamespace(owner, repo string) string {
+	return normalizeNamespaceSegment(owner) + "-" + normalizeNamespaceSegment(repo)
+}
+
+// normalizeNamespaceSegment lowercases s and collapses every run of
+// non-`[a-z0-9]` characters into a single `-`, trimming leading/trailing `-`.
+func normalizeNamespaceSegment(s string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash {
+			b.WriteByte('-')
+			dash = true
+		}
 	}
-	return parts[1], nil
+	return strings.Trim(b.String(), "-")
 }
 
 // resolveUpstreamInputs picks values from either the positional URL or
@@ -513,11 +542,14 @@ func resolveUpstreamInputs(o addOpts) (owner, repo, subpath, version string, err
 	return parts[0], parts[1], strings.Trim(o.Subpath, "/"), o.Version, nil
 }
 
-// resolveInternalRef computes the destination OCI ref using the
-// following precedence chain:
+// resolveInternalRef computes the destination OCI ref. Unless overridden, it is
+// source-qualified at owner/repo granularity:
+// `<base-namespace>/<owner>/<repo>/<name>` (owner/repo lowercased for OCI). The
+// base namespace is resolved by the precedence chain:
 // --internal-ref > --namespace flag > project config default_namespace
-// > SKILLS_OCI_DEFAULT_NAMESPACE env var > error.
-func resolveInternalRef(o addOpts, cfg interface{ GetDefaultNamespace() string }, name string) (string, error) {
+// > SKILLS_OCI_DEFAULT_NAMESPACE env var > error. `--internal-ref` is a full
+// manual override of the OCI ref and bypasses the owner/repo qualification.
+func resolveInternalRef(o addOpts, cfg interface{ GetDefaultNamespace() string }, owner, repo, name string) (string, error) {
 	if o.InternalRef != "" {
 		return o.InternalRef, nil
 	}
@@ -531,7 +563,7 @@ func resolveInternalRef(o addOpts, cfg interface{ GetDefaultNamespace() string }
 	if ns == "" {
 		return "", fmt.Errorf("no default namespace configured; pass --namespace, set catalog.default_namespace in .skills-oci.yaml, or export SKILLS_OCI_DEFAULT_NAMESPACE")
 	}
-	return strings.TrimRight(ns, "/") + "/" + name, nil
+	return strings.TrimRight(ns, "/") + "/" + strings.ToLower(owner) + "/" + strings.ToLower(repo) + "/" + name, nil
 }
 
 // configAccessor adapts config.Config to the small interface

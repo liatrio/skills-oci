@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -136,11 +137,11 @@ func TestCatalogAdd_WritesVendored(t *testing.T) {
 	got := v.Skills[0]
 	want := catalog.VendoredEntry{
 		Name:        "create-skill",
-		Namespace:   "liatrio",
+		Namespace:   "anthropics-skills", // source-qualified: <owner>-<repo>
 		Repo:        "anthropics/skills",
 		Subpath:     "skills/create-skill",
 		Commit:      commit,
-		InternalRef: "ghcr.io/liatrio/skills/create-skill",
+		InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/create-skill",
 		License:     "Apache-2.0", // from the fakeFetcher's default SKILL.md
 	}
 	if got != want {
@@ -201,9 +202,9 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 		t.Helper()
 		path := tempVendoredPath(t)
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
-			Name: "create-skill", Namespace: "liatrio", Repo: "anthropics/skills",
+			Name: "create-skill", Namespace: "anthropics-skills", Repo: "anthropics/skills",
 			Subpath: "skills/create-skill", Commit: oldCommit,
-			InternalRef: "ghcr.io/liatrio/skills/create-skill",
+			InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/create-skill",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -307,7 +308,7 @@ func TestCatalogAdd_DryRun(t *testing.T) {
 		t.Errorf("dry-run output should announce would-be add; got:\n%s", got)
 	}
 	// The resolved entry's coordinates should appear in the printed JSON.
-	if !strings.Contains(got, "create-skill") || !strings.Contains(got, "ghcr.io/liatrio/skills/create-skill") {
+	if !strings.Contains(got, "create-skill") || !strings.Contains(got, "ghcr.io/liatrio/skills/anthropics/skills/create-skill") {
 		t.Errorf("dry-run output missing resolved entry fields; got:\n%s", got)
 	}
 }
@@ -343,13 +344,13 @@ func TestCatalogAdd_MultiSkillDiscovery(t *testing.T) {
 		if e.Repo != "anthropics/skills" || e.Commit != commit {
 			t.Errorf("entry %q has wrong coordinates: %+v", e.Name, e)
 		}
-		if e.Namespace != "liatrio" {
-			t.Errorf("entry %q namespace = %q, want liatrio", e.Name, e.Namespace)
+		if e.Namespace != "anthropics-skills" {
+			t.Errorf("entry %q namespace = %q, want anthropics-skills", e.Name, e.Namespace)
 		}
 		if e.Subpath != "skills/"+e.Name {
 			t.Errorf("entry %q subpath = %q, want skills/%s", e.Name, e.Subpath, e.Name)
 		}
-		if e.InternalRef != "ghcr.io/liatrio/skills/"+e.Name {
+		if e.InternalRef != "ghcr.io/liatrio/skills/anthropics/skills/"+e.Name {
 			t.Errorf("entry %q internal_ref = %q", e.Name, e.InternalRef)
 		}
 	}
@@ -461,9 +462,9 @@ func TestCatalogAdd_MultiPerSkillOverwritePrompt(t *testing.T) {
 		t.Helper()
 		path := tempVendoredPath(t)
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
-			Name: "alpha", Namespace: "liatrio", Repo: "anthropics/skills",
+			Name: "alpha", Namespace: "anthropics-skills", Repo: "anthropics/skills",
 			Subpath: "skills/alpha", Commit: oldCommit,
-			InternalRef: "ghcr.io/liatrio/skills/alpha",
+			InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/alpha",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -523,9 +524,9 @@ func TestCatalogAdd_MultiPlainOverwrite(t *testing.T) {
 		t.Helper()
 		path := tempVendoredPath(t)
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
-			Name: "alpha", Namespace: "liatrio", Repo: "anthropics/skills",
+			Name: "alpha", Namespace: "anthropics-skills", Repo: "anthropics/skills",
 			Subpath: "skills/alpha", Commit: oldCommit,
-			InternalRef: "ghcr.io/liatrio/skills/alpha",
+			InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/alpha",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -543,7 +544,7 @@ func TestCatalogAdd_MultiPlainOverwrite(t *testing.T) {
 		if err == nil {
 			t.Fatal("--plain overwrite without -y should error")
 		}
-		if !strings.Contains(err.Error(), "-y") || !strings.Contains(err.Error(), "liatrio/alpha") {
+		if !strings.Contains(err.Error(), "-y") || !strings.Contains(err.Error(), "anthropics-skills/alpha") {
 			t.Errorf("error %q should name the conflict and -y", err.Error())
 		}
 		if got := loadVendoredFromDisk(t, path).Skills[0].Commit; got != oldCommit {
@@ -778,43 +779,53 @@ func TestRunCatalogAddWithDeps_OutputMatchesSpecFormat(t *testing.T) {
 }
 
 func TestResolveInternalRef_PrecedenceChain(t *testing.T) {
-	// --internal-ref wins over everything.
-	got, err := resolveInternalRef(addOpts{InternalRef: "explicit:tag-stripped"}, configAccessor{defaultNamespace: "from-config"}, "name")
+	// --internal-ref wins over everything and bypasses owner/repo qualification.
+	got, err := resolveInternalRef(addOpts{InternalRef: "explicit:tag-stripped"}, configAccessor{defaultNamespace: "from-config"}, "anthropics", "skills", "name")
 	if err != nil || got != "explicit:tag-stripped" {
 		t.Errorf("--internal-ref didn't win: got=%q err=%v", got, err)
 	}
 
-	// --namespace beats config.
-	got, err = resolveInternalRef(addOpts{Namespace: "from-flag"}, configAccessor{defaultNamespace: "from-config"}, "name")
-	if err != nil || got != "from-flag/name" {
+	// --namespace beats config; ref is source-qualified <base>/<owner>/<repo>/<name>.
+	got, err = resolveInternalRef(addOpts{Namespace: "from-flag"}, configAccessor{defaultNamespace: "from-config"}, "anthropics", "skills", "name")
+	if err != nil || got != "from-flag/anthropics/skills/name" {
 		t.Errorf("--namespace didn't win: got=%q err=%v", got, err)
 	}
 
 	// Config beats env.
 	t.Setenv("SKILLS_OCI_DEFAULT_NAMESPACE", "from-env")
-	got, err = resolveInternalRef(addOpts{}, configAccessor{defaultNamespace: "from-config"}, "name")
-	if err != nil || got != "from-config/name" {
+	got, err = resolveInternalRef(addOpts{}, configAccessor{defaultNamespace: "from-config"}, "anthropics", "skills", "name")
+	if err != nil || got != "from-config/anthropics/skills/name" {
 		t.Errorf("config didn't beat env: got=%q err=%v", got, err)
 	}
 
 	// Env when no config.
-	got, err = resolveInternalRef(addOpts{}, configAccessor{}, "name")
-	if err != nil || got != "from-env/name" {
+	got, err = resolveInternalRef(addOpts{}, configAccessor{}, "anthropics", "skills", "name")
+	if err != nil || got != "from-env/anthropics/skills/name" {
 		t.Errorf("env didn't fall through: got=%q err=%v", got, err)
 	}
 
 	// Nothing → error.
 	t.Setenv("SKILLS_OCI_DEFAULT_NAMESPACE", "")
-	if _, err := resolveInternalRef(addOpts{}, configAccessor{}, "name"); err == nil {
+	if _, err := resolveInternalRef(addOpts{}, configAccessor{}, "anthropics", "skills", "name"); err == nil {
 		t.Error("no source produced no error")
 	}
 }
 
 func TestResolveInternalRef_StripsTrailingSlashOnNamespace(t *testing.T) {
-	got, _ := resolveInternalRef(addOpts{Namespace: "ghcr.io/liatrio/skills/"}, configAccessor{}, "create-skill")
-	want := "ghcr.io/liatrio/skills/create-skill"
+	got, _ := resolveInternalRef(addOpts{Namespace: "ghcr.io/liatrio/skills/"}, configAccessor{}, "anthropics", "skills", "create-skill")
+	want := "ghcr.io/liatrio/skills/anthropics/skills/create-skill"
 	if got != want {
 		t.Errorf("got %q, want %q (trailing slash should be stripped)", got, want)
+	}
+}
+
+func TestResolveInternalRef_LowercasesOwnerRepo(t *testing.T) {
+	// OCI path components must be lowercase; the source qualifier honors that
+	// even when the GitHub owner/repo carry uppercase letters.
+	got, _ := resolveInternalRef(addOpts{Namespace: "ghcr.io/liatrio/skills"}, configAccessor{}, "MattPocock", "Skills", "review")
+	want := "ghcr.io/liatrio/skills/mattpocock/skills/review"
+	if got != want {
+		t.Errorf("got %q, want %q (owner/repo should be lowercased)", got, want)
 	}
 }
 
@@ -1096,37 +1107,146 @@ func TestLoadVendoredFile_ParseErrorSurfaced(t *testing.T) {
 	}
 }
 
-func TestExtractV2Namespace(t *testing.T) {
+func TestSourceNamespace(t *testing.T) {
+	// namespace = normalize(owner) + "-" + normalize(repo); result must be a
+	// single kebab token matching the contract's identifier regex.
+	identifier := regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 	tests := []struct {
-		name        string
-		internalRef string
-		want        string
-		wantErr     bool
+		name  string
+		owner string
+		repo  string
+		want  string
 	}{
-		{"valid four-segment ref", "ghcr.io/liatrio/skills/create-skill", "liatrio", false},
-		{"valid two-segment ref", "registry/namespace", "namespace", false},
-		{"single segment errors", "singleword", "", true},
-		{"empty second segment errors", "registry/", "", true},
-		{"empty string errors", "", "", true},
+		{"plain", "mattpocock", "skills", "mattpocock-skills"},
+		{"uppercase lowered", "MattPocock", "Skills", "mattpocock-skills"},
+		{"dotted owner", "vercel.labs", "agent-skills", "vercel-labs-agent-skills"},
+		{"underscores collapsed", "a_b", "c__d", "a-b-c-d"},
+		{"hyphen preserved", "vercel-labs", "agent-skills", "vercel-labs-agent-skills"},
+		{"trims boundary punctuation", "_owner_", "_repo_", "owner-repo"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := extractV2Namespace(tt.internalRef)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("extractV2Namespace(%q) = %q, want error", tt.internalRef, got)
-				}
-				if !strings.Contains(err.Error(), "<registry>/<namespace>/skills/<name>") {
-					t.Errorf("error %q lacks the format hint", err.Error())
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("extractV2Namespace(%q) unexpected error: %v", tt.internalRef, err)
-			}
+			got := sourceNamespace(tt.owner, tt.repo)
 			if got != tt.want {
-				t.Errorf("extractV2Namespace(%q) = %q, want %q", tt.internalRef, got, tt.want)
+				t.Errorf("sourceNamespace(%q, %q) = %q, want %q", tt.owner, tt.repo, got, tt.want)
+			}
+			if !identifier.MatchString(got) {
+				t.Errorf("sourceNamespace(%q, %q) = %q does not match identifier regex", tt.owner, tt.repo, got)
 			}
 		})
+	}
+}
+
+// TestCatalogAdd_SourceQualifiedAvoidsCrossRepoCollision is the core
+// guarantee: two source repos that each ship a skill named "review" produce two
+// distinct entries — neither clobbers the other — because the catalog namespace
+// is source-qualified to <owner>-<repo>.
+func TestCatalogAdd_SourceQualifiedAvoidsCrossRepoCollision(t *testing.T) {
+	out := &bytes.Buffer{}
+	path := tempVendoredPath(t)
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+	res := fakeResolver{commit: commit}
+
+	addReview := func(owner string) error {
+		o := addOpts{
+			URL:          "https://github.com/" + owner + "/skills/tree/v1.0.0/review",
+			Namespace:    "ghcr.io/liatrio/skills",
+			VendoredPath: path,
+			Yes:          true,
+		}
+		return runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+	}
+
+	if err := addReview("anthropics"); err != nil {
+		t.Fatalf("add anthropics/skills review: %v", err)
+	}
+	if err := addReview("mattpocock"); err != nil {
+		t.Fatalf("add mattpocock/skills review: %v", err)
+	}
+
+	v := loadVendoredFromDisk(t, path)
+	if len(v.Skills) != 2 {
+		t.Fatalf("len(skills) = %d, want 2 (no cross-repo overwrite); entries=%+v", len(v.Skills), v.Skills)
+	}
+	byNS := map[string]catalog.VendoredEntry{}
+	for _, e := range v.Skills {
+		byNS[e.Namespace] = e
+	}
+	a, ok := byNS["anthropics-skills"]
+	if !ok || a.Name != "review" || a.InternalRef != "ghcr.io/liatrio/skills/anthropics/skills/review" {
+		t.Errorf("anthropics entry wrong: %+v", a)
+	}
+	m, ok := byNS["mattpocock-skills"]
+	if !ok || m.Name != "review" || m.InternalRef != "ghcr.io/liatrio/skills/mattpocock/skills/review" {
+		t.Errorf("mattpocock entry wrong: %+v", m)
+	}
+}
+
+// TestCatalogAdd_NormalizationCollisionRejected covers the residual risk that
+// two distinct repos normalize to the same namespace token. The add must fail
+// rather than silently overwrite an entry from a different source.
+func TestCatalogAdd_NormalizationCollisionRejected(t *testing.T) {
+	path := tempVendoredPath(t)
+	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
+	// Seed an entry whose (namespace, name) is "a-b-c"/"x" but whose
+	// internal_ref came from a *different* repo layout (owner=a-b, repo=c).
+	seed := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
+		Name: "x", Namespace: "a-b-c", Repo: "a-b/c",
+		Subpath: "x", Commit: commit,
+		InternalRef: "ghcr.io/liatrio/skills/a-b/c/x",
+	}}}
+	if err := catalog.WriteVendoredAtomic(path, seed); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	out := &bytes.Buffer{}
+	// owner=a, repo=b-c also normalizes to "a-b-c"; skill "x" → same identity,
+	// but a different internal_ref (ghcr.io/liatrio/skills/a/b-c/x).
+	o := addOpts{
+		URL:          "https://github.com/a/b-c/tree/v1.0.0/x",
+		Namespace:    "ghcr.io/liatrio/skills",
+		VendoredPath: path,
+		Yes:          true,
+	}
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, fakeResolver{commit: commit}, fakeFetcher{writeSkillMD: true})
+	if err == nil {
+		t.Fatal("expected a namespace-collision error, got nil")
+	}
+	if !strings.Contains(err.Error(), "collision") {
+		t.Errorf("error %q should name the collision", err.Error())
+	}
+	// The seeded entry must be untouched.
+	v := loadVendoredFromDisk(t, path)
+	if len(v.Skills) != 1 || v.Skills[0].InternalRef != "ghcr.io/liatrio/skills/a-b/c/x" {
+		t.Errorf("seeded entry was modified: %+v", v.Skills)
+	}
+}
+
+// TestCatalogAdd_RejectsUnderQualifiedNamespace is the regression guard for the
+// incident where an under-qualified internal_ref `liatrio/<name>` (missing the
+// registry host) reached vendored.json. The default discovery path now always
+// source-qualifies to <base>/<owner>/<repo>/<name>, so the only remaining way to
+// under-qualify is a manual `--internal-ref` override. The consumer's registry
+// parser requires <registry>/<namespace>/<name>, so the write-path
+// ValidateVendored gate must reject it and write nothing.
+func TestCatalogAdd_RejectsUnderQualifiedNamespace(t *testing.T) {
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+
+	opts := addOpts{
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
+		InternalRef:  "liatrio/create-skill", // two-segment override, missing registry host
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+	if err == nil {
+		t.Fatal("runCatalogAddWithDeps accepted an under-qualified internal_ref")
+	}
+	if !strings.Contains(err.Error(), "internal_ref") && !strings.Contains(err.Error(), "<registry>/<namespace>") {
+		t.Errorf("error %q lacks internal_ref/format context", err.Error())
+	}
+	if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
+		t.Errorf("a rejected add must not write vendored.json (found file at %s)", vendoredPath)
 	}
 }
