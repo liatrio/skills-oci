@@ -117,13 +117,12 @@ func TestCatalogAdd_WritesVendored(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: commit}
 	fet := fakeFetcher{writeSkillMD: true}
 
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 
@@ -136,13 +135,12 @@ func TestCatalogAdd_WritesVendored(t *testing.T) {
 	}
 	got := v.Skills[0]
 	want := catalog.VendoredEntry{
-		Name:        "create-skill",
-		Namespace:   "anthropics-skills", // source-qualified: <owner>-<repo>
-		Repo:        "anthropics/skills",
-		Subpath:     "skills/create-skill",
-		Commit:      commit,
-		InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/create-skill",
-		License:     "Apache-2.0", // from the fakeFetcher's default SKILL.md
+		Name:      "create-skill",
+		Namespace: "anthropics-skills", // source-qualified: <owner>-<repo>
+		Repo:      "anthropics/skills",
+		Subpath:   "skills/create-skill",
+		Commit:    commit,
+		License:   "Apache-2.0", // from the fakeFetcher's default SKILL.md
 	}
 	if got != want {
 		t.Errorf("entry = %+v, want %+v", got, want)
@@ -157,11 +155,10 @@ func TestCatalogAdd_WritesVendored_FlagForm(t *testing.T) {
 		Repo:         "anthropics/skills",
 		Subpath:      "skills/create-skill",
 		Version:      "v1.0.0",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true}); err != nil {
 		t.Fatalf("flag form: %v", err)
 	}
 	v := loadVendoredFromDisk(t, vendoredPath)
@@ -179,11 +176,10 @@ func TestCatalogAdd_BranchInputPinsResolvedSHA(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/main/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: commit, mutable: true}
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true}); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 	got := loadVendoredFromDisk(t, vendoredPath).Skills[0]
@@ -204,7 +200,6 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
 			Name: "create-skill", Namespace: "anthropics-skills", Repo: "anthropics/skills",
 			Subpath: "skills/create-skill", Commit: oldCommit,
-			InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/create-skill",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -215,7 +210,6 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 	baseOpts := func(path string) addOpts {
 		return addOpts{
 			URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-			Namespace:    "ghcr.io/liatrio/skills",
 			VendoredPath: path,
 		}
 	}
@@ -223,7 +217,7 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 	t.Run("piped n aborts without writing", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("n\n"), baseOpts(path), configAccessor{}, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true})
+		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("n\n"), baseOpts(path), fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true})
 		if err != nil {
 			t.Fatalf("declined overwrite should not error: %v", err)
 		}
@@ -235,7 +229,7 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 	t.Run("empty answer (just enter) aborts", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("\n"), baseOpts(path), configAccessor{}, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true}); err != nil {
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("\n"), baseOpts(path), fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true}); err != nil {
 			t.Fatalf("empty answer should not error: %v", err)
 		}
 		if got := loadVendoredFromDisk(t, path).Skills[0].Commit; got != oldCommit {
@@ -246,7 +240,7 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 	t.Run("piped y overwrites", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("y\n"), baseOpts(path), configAccessor{}, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true}); err != nil {
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("y\n"), baseOpts(path), fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true}); err != nil {
 			t.Fatalf("confirmed overwrite errored: %v", err)
 		}
 		if got := loadVendoredFromDisk(t, path).Skills[0].Commit; got != newCommit {
@@ -259,7 +253,7 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 		out := &bytes.Buffer{}
 		o := baseOpts(path)
 		o.Plain = true
-		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true})
+		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true})
 		if err == nil {
 			t.Fatal("--plain overwrite without -y should error")
 		}
@@ -277,7 +271,7 @@ func TestCatalogAdd_OverwriteRequiresConfirm(t *testing.T) {
 		o := baseOpts(path)
 		o.Plain = true
 		o.Yes = true
-		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true}); err != nil {
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, fakeResolver{commit: newCommit}, fakeFetcher{writeSkillMD: true}); err != nil {
 			t.Fatalf("--plain -y errored: %v", err)
 		}
 		if got := loadVendoredFromDisk(t, path).Skills[0].Commit; got != newCommit {
@@ -292,12 +286,11 @@ func TestCatalogAdd_DryRun(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 		DryRun:       true,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true}); err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
 	if _, err := os.Stat(vendoredPath); !os.IsNotExist(err) {
@@ -308,7 +301,7 @@ func TestCatalogAdd_DryRun(t *testing.T) {
 		t.Errorf("dry-run output should announce would-be add; got:\n%s", got)
 	}
 	// The resolved entry's coordinates should appear in the printed JSON.
-	if !strings.Contains(got, "create-skill") || !strings.Contains(got, "ghcr.io/liatrio/skills/anthropics/skills/create-skill") {
+	if !strings.Contains(got, "create-skill") || !strings.Contains(got, "anthropics/skills") {
 		t.Errorf("dry-run output missing resolved entry fields; got:\n%s", got)
 	}
 }
@@ -322,14 +315,13 @@ func TestCatalogAdd_MultiSkillDiscovery(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: commit}
 	// Intentionally out of order to prove the output is sorted.
 	fet := fakeFetcher{extraSkills: []string{"skills/beta", "skills/alpha"}}
 
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 
@@ -350,9 +342,6 @@ func TestCatalogAdd_MultiSkillDiscovery(t *testing.T) {
 		if e.Subpath != "skills/"+e.Name {
 			t.Errorf("entry %q subpath = %q, want skills/%s", e.Name, e.Subpath, e.Name)
 		}
-		if e.InternalRef != "ghcr.io/liatrio/skills/anthropics/skills/"+e.Name {
-			t.Errorf("entry %q internal_ref = %q", e.Name, e.InternalRef)
-		}
 	}
 	if got := out.String(); !strings.Contains(got, "discovered 2 skill(s)") || !strings.Contains(got, "wrote 2 entries") {
 		t.Errorf("output missing multi-skill banners; got:\n%s", got)
@@ -368,13 +357,12 @@ func TestCatalogAdd_ContainerSubpathDiscovery(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: commit}
 	fet := fakeFetcher{extraSkills: []string{"skills/one", "skills/two"}}
 
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 	v := loadVendoredFromDisk(t, vendoredPath)
@@ -395,13 +383,12 @@ func TestCatalogAdd_BareRepoResolvesDefaultBranch(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/vercel-labs/agent-skills",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: commit}
 	fet := fakeFetcher{extraSkills: []string{"skills/web"}}
 
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 	v := loadVendoredFromDisk(t, vendoredPath)
@@ -420,35 +407,26 @@ func TestCatalogAdd_BareRepoResolvesDefaultBranch(t *testing.T) {
 	}
 }
 
-func TestCatalogAdd_NameAndInternalRefRejectedInMultiMode(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		o    addOpts
-	}{
-		{"name set", addOpts{Name: "custom"}},
-		{"internal-ref set", addOpts{InternalRef: "ghcr.io/x/skills/custom"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			out := &bytes.Buffer{}
-			vendoredPath := tempVendoredPath(t)
-			o := tc.o
-			o.URL = "https://github.com/anthropics/skills/tree/v1.0.0"
-			o.Namespace = "ghcr.io/liatrio/skills"
-			o.VendoredPath = vendoredPath
-			res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-			fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
+func TestCatalogAdd_NameRejectedInMultiMode(t *testing.T) {
+	out := &bytes.Buffer{}
+	vendoredPath := tempVendoredPath(t)
+	o := addOpts{
+		Name:         "custom",
+		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
+		VendoredPath: vendoredPath,
+	}
+	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
+	fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
 
-			err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fet)
-			if err == nil {
-				t.Fatal("expected error when --name/--internal-ref used with multiple discovered skills")
-			}
-			if !strings.Contains(err.Error(), "single skill") {
-				t.Errorf("error %q should explain the single-skill restriction", err.Error())
-			}
-			if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
-				t.Errorf("vendored.json should not be written on rejection")
-			}
-		})
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, res, fet)
+	if err == nil {
+		t.Fatal("expected error when --name used with multiple discovered skills")
+	}
+	if !strings.Contains(err.Error(), "single skill") {
+		t.Errorf("error %q should explain the single-skill restriction", err.Error())
+	}
+	if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
+		t.Errorf("vendored.json should not be written on rejection")
 	}
 }
 
@@ -464,7 +442,6 @@ func TestCatalogAdd_MultiPerSkillOverwritePrompt(t *testing.T) {
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
 			Name: "alpha", Namespace: "anthropics-skills", Repo: "anthropics/skills",
 			Subpath: "skills/alpha", Commit: oldCommit,
-			InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/alpha",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -475,7 +452,6 @@ func TestCatalogAdd_MultiPerSkillOverwritePrompt(t *testing.T) {
 	mkOpts := func(path string) addOpts {
 		return addOpts{
 			URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
-			Namespace:    "ghcr.io/liatrio/skills",
 			VendoredPath: path,
 		}
 	}
@@ -485,7 +461,7 @@ func TestCatalogAdd_MultiPerSkillOverwritePrompt(t *testing.T) {
 	t.Run("declining alpha keeps it but still adds beta", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("n\n"), mkOpts(path), configAccessor{}, res, fet); err != nil {
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("n\n"), mkOpts(path), res, fet); err != nil {
 			t.Fatalf("runCatalogAddWithDeps: %v", err)
 		}
 		v := loadVendoredFromDisk(t, path)
@@ -504,7 +480,7 @@ func TestCatalogAdd_MultiPerSkillOverwritePrompt(t *testing.T) {
 	t.Run("confirming alpha overwrites it", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("y\n"), mkOpts(path), configAccessor{}, res, fet); err != nil {
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader("y\n"), mkOpts(path), res, fet); err != nil {
 			t.Fatalf("runCatalogAddWithDeps: %v", err)
 		}
 		v := loadVendoredFromDisk(t, path)
@@ -526,7 +502,6 @@ func TestCatalogAdd_MultiPlainOverwrite(t *testing.T) {
 		v := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
 			Name: "alpha", Namespace: "anthropics-skills", Repo: "anthropics/skills",
 			Subpath: "skills/alpha", Commit: oldCommit,
-			InternalRef: "ghcr.io/liatrio/skills/anthropics/skills/alpha",
 		}}}
 		if err := catalog.WriteVendoredAtomic(path, v); err != nil {
 			t.Fatalf("seed: %v", err)
@@ -539,8 +514,8 @@ func TestCatalogAdd_MultiPlainOverwrite(t *testing.T) {
 	t.Run("--plain without -y errors and lists the conflict", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		o := addOpts{URL: "https://github.com/anthropics/skills/tree/v1.0.0", Namespace: "ghcr.io/liatrio/skills", VendoredPath: path, Plain: true}
-		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fet)
+		o := addOpts{URL: "https://github.com/anthropics/skills/tree/v1.0.0", VendoredPath: path, Plain: true}
+		err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, res, fet)
 		if err == nil {
 			t.Fatal("--plain overwrite without -y should error")
 		}
@@ -555,8 +530,8 @@ func TestCatalogAdd_MultiPlainOverwrite(t *testing.T) {
 	t.Run("--plain with -y overwrites all", func(t *testing.T) {
 		path := seed(t)
 		out := &bytes.Buffer{}
-		o := addOpts{URL: "https://github.com/anthropics/skills/tree/v1.0.0", Namespace: "ghcr.io/liatrio/skills", VendoredPath: path, Plain: true, Yes: true}
-		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fet); err != nil {
+		o := addOpts{URL: "https://github.com/anthropics/skills/tree/v1.0.0", VendoredPath: path, Plain: true, Yes: true}
+		if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, res, fet); err != nil {
 			t.Fatalf("--plain -y errored: %v", err)
 		}
 		for _, e := range loadVendoredFromDisk(t, path).Skills {
@@ -572,14 +547,13 @@ func TestCatalogAdd_MultiDryRun(t *testing.T) {
 	vendoredPath := tempVendoredPath(t)
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 		DryRun:       true,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
 	fet := fakeFetcher{extraSkills: []string{"skills/alpha", "skills/beta"}}
 
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet); err != nil {
 		t.Fatalf("multi dry run: %v", err)
 	}
 	if _, err := os.Stat(vendoredPath); !os.IsNotExist(err) {
@@ -619,11 +593,10 @@ func TestCatalogAdd_ParseFailureAbortsWholeAdd(t *testing.T) {
 	vendoredPath := tempVendoredPath(t)
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, partialBadFetcher{})
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, partialBadFetcher{})
 	if err == nil {
 		t.Fatal("expected parse failure to abort the add")
 	}
@@ -686,36 +659,18 @@ func TestParseAddOpts_DefaultsAndYesFlag(t *testing.T) {
 	}
 }
 
-func TestRunCatalogAddWithDeps_RejectsMissingNamespace(t *testing.T) {
-	out := &bytes.Buffer{}
-	t.Setenv("SKILLS_OCI_DEFAULT_NAMESPACE", "") // ensure env var not set
-	opts := addOpts{
-		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		VendoredPath: tempVendoredPath(t),
-	}
-	cfg := configAccessor{} // no DefaultNamespace
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, cfg, fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}, fakeFetcher{writeSkillMD: true})
-	if err == nil {
-		t.Fatal("runCatalogAddWithDeps accepted missing namespace")
-	}
-	if !strings.Contains(err.Error(), "namespace") {
-		t.Errorf("error %q lacks 'namespace' context", err.Error())
-	}
-}
-
 func TestRunCatalogAddWithDeps_FetchErrorsOnMissingSKILLMD(t *testing.T) {
 	out := &bytes.Buffer{}
 	vendoredPath := tempVendoredPath(t)
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
 	fet := fakeFetcher{writeSkillMD: false} // fetcher returns an error
 
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet)
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet)
 	if err == nil {
 		t.Fatal("runCatalogAddWithDeps accepted upstream without SKILL.md")
 	}
@@ -730,11 +685,10 @@ func TestRunCatalogAddWithDeps_TagNotFound(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v9.9.9/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{err: errors.New("tag \"v9.9.9\" not found on anthropics/skills")}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true})
 	if err == nil {
 		t.Fatal("runCatalogAddWithDeps accepted tag-not-found")
 	}
@@ -750,13 +704,12 @@ func TestRunCatalogAddWithDeps_OutputMatchesSpecFormat(t *testing.T) {
 
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
 	fet := fakeFetcher{writeSkillMD: true} // default body has name+version+license
 
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fet); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fet); err != nil {
 		t.Fatalf("happy path: %v", err)
 	}
 
@@ -775,57 +728,6 @@ func TestRunCatalogAddWithDeps_OutputMatchesSpecFormat(t *testing.T) {
 		if !strings.Contains(got, line) {
 			t.Errorf("output missing %q\n--- got ---\n%s", line, got)
 		}
-	}
-}
-
-func TestResolveInternalRef_PrecedenceChain(t *testing.T) {
-	// --internal-ref wins over everything and bypasses owner/repo qualification.
-	got, err := resolveInternalRef(addOpts{InternalRef: "explicit:tag-stripped"}, configAccessor{defaultNamespace: "from-config"}, "anthropics", "skills", "name")
-	if err != nil || got != "explicit:tag-stripped" {
-		t.Errorf("--internal-ref didn't win: got=%q err=%v", got, err)
-	}
-
-	// --namespace beats config; ref is source-qualified <base>/<owner>/<repo>/<name>.
-	got, err = resolveInternalRef(addOpts{Namespace: "from-flag"}, configAccessor{defaultNamespace: "from-config"}, "anthropics", "skills", "name")
-	if err != nil || got != "from-flag/anthropics/skills/name" {
-		t.Errorf("--namespace didn't win: got=%q err=%v", got, err)
-	}
-
-	// Config beats env.
-	t.Setenv("SKILLS_OCI_DEFAULT_NAMESPACE", "from-env")
-	got, err = resolveInternalRef(addOpts{}, configAccessor{defaultNamespace: "from-config"}, "anthropics", "skills", "name")
-	if err != nil || got != "from-config/anthropics/skills/name" {
-		t.Errorf("config didn't beat env: got=%q err=%v", got, err)
-	}
-
-	// Env when no config.
-	got, err = resolveInternalRef(addOpts{}, configAccessor{}, "anthropics", "skills", "name")
-	if err != nil || got != "from-env/anthropics/skills/name" {
-		t.Errorf("env didn't fall through: got=%q err=%v", got, err)
-	}
-
-	// Nothing → error.
-	t.Setenv("SKILLS_OCI_DEFAULT_NAMESPACE", "")
-	if _, err := resolveInternalRef(addOpts{}, configAccessor{}, "anthropics", "skills", "name"); err == nil {
-		t.Error("no source produced no error")
-	}
-}
-
-func TestResolveInternalRef_StripsTrailingSlashOnNamespace(t *testing.T) {
-	got, _ := resolveInternalRef(addOpts{Namespace: "ghcr.io/liatrio/skills/"}, configAccessor{}, "anthropics", "skills", "create-skill")
-	want := "ghcr.io/liatrio/skills/anthropics/skills/create-skill"
-	if got != want {
-		t.Errorf("got %q, want %q (trailing slash should be stripped)", got, want)
-	}
-}
-
-func TestResolveInternalRef_LowercasesOwnerRepo(t *testing.T) {
-	// OCI path components must be lowercase; the source qualifier honors that
-	// even when the GitHub owner/repo carry uppercase letters.
-	got, _ := resolveInternalRef(addOpts{Namespace: "ghcr.io/liatrio/skills"}, configAccessor{}, "MattPocock", "Skills", "review")
-	want := "ghcr.io/liatrio/skills/mattpocock/skills/review"
-	if got != want {
-		t.Errorf("got %q, want %q (owner/repo should be lowercased)", got, want)
 	}
 }
 
@@ -873,10 +775,9 @@ func TestRunCatalogAddWithDeps_MalformedURLRejected(t *testing.T) {
 	out := &bytes.Buffer{}
 	opts := addOpts{
 		URL:          "https://gitlab.com/foo/bar/tree/v1.0.0/x", // non-github host
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: tempVendoredPath(t),
 	}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}, fakeFetcher{writeSkillMD: true})
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}, fakeFetcher{writeSkillMD: true})
 	if err == nil {
 		t.Fatal("runCatalogAddWithDeps accepted non-github URL")
 	}
@@ -889,11 +790,10 @@ func TestRunCatalogAddWithDeps_FetchFailure(t *testing.T) {
 	out := &bytes.Buffer{}
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: tempVendoredPath(t),
 	}
 	fet := fakeFetcher{err: errors.New("simulated network failure")}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}, fet)
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}, fet)
 	if err == nil {
 		t.Fatal("runCatalogAddWithDeps swallowed fetch failure")
 	}
@@ -935,10 +835,9 @@ func TestRunCatalogAddWithDeps_RejectsSSRFRepoBeforeResolve(t *testing.T) {
 				Repo:         repo,
 				Subpath:      "skills/create-skill",
 				Version:      "v1.0.0",
-				Namespace:    "ghcr.io/liatrio/skills",
 				VendoredPath: tempVendoredPath(t),
 			}
-			err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+			err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true})
 			if err == nil {
 				t.Fatalf("runCatalogAddWithDeps accepted SSRF-prone --repo %q", repo)
 			}
@@ -1006,11 +905,10 @@ func TestRunCatalogAddWithDeps_TimeoutAppliesDeadline(t *testing.T) {
 	res := &deadlineResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: tempVendoredPath(t),
 		Timeout:      30 * time.Second,
 	}
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true}); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 	if !res.hadDeadline {
@@ -1023,11 +921,10 @@ func TestRunCatalogAddWithDeps_ZeroTimeoutNoDeadline(t *testing.T) {
 	res := &deadlineResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: tempVendoredPath(t),
 		Timeout:      0,
 	}
-	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true}); err != nil {
+	if err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, fakeFetcher{writeSkillMD: true}); err != nil {
 		t.Fatalf("runCatalogAddWithDeps: %v", err)
 	}
 	if res.hadDeadline {
@@ -1058,11 +955,10 @@ func TestRunCatalogAddWithDeps_FetchSucceedsButNoSKILLMD(t *testing.T) {
 	vendoredPath := tempVendoredPath(t)
 	opts := addOpts{
 		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: vendoredPath,
 	}
 	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, noSkillMDFetcher{})
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, res, noSkillMDFetcher{})
 	if err == nil {
 		t.Fatal("runCatalogAddWithDeps accepted subpath without SKILL.md")
 	}
@@ -1150,11 +1046,10 @@ func TestCatalogAdd_SourceQualifiedAvoidsCrossRepoCollision(t *testing.T) {
 	addReview := func(owner string) error {
 		o := addOpts{
 			URL:          "https://github.com/" + owner + "/skills/tree/v1.0.0/review",
-			Namespace:    "ghcr.io/liatrio/skills",
 			VendoredPath: path,
 			Yes:          true,
 		}
-		return runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
+		return runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, res, fakeFetcher{writeSkillMD: true})
 	}
 
 	if err := addReview("anthropics"); err != nil {
@@ -1173,11 +1068,11 @@ func TestCatalogAdd_SourceQualifiedAvoidsCrossRepoCollision(t *testing.T) {
 		byNS[e.Namespace] = e
 	}
 	a, ok := byNS["anthropics-skills"]
-	if !ok || a.Name != "review" || a.InternalRef != "ghcr.io/liatrio/skills/anthropics/skills/review" {
+	if !ok || a.Name != "review" || a.Repo != "anthropics/skills" {
 		t.Errorf("anthropics entry wrong: %+v", a)
 	}
 	m, ok := byNS["mattpocock-skills"]
-	if !ok || m.Name != "review" || m.InternalRef != "ghcr.io/liatrio/skills/mattpocock/skills/review" {
+	if !ok || m.Name != "review" || m.Repo != "mattpocock/skills" {
 		t.Errorf("mattpocock entry wrong: %+v", m)
 	}
 }
@@ -1188,12 +1083,11 @@ func TestCatalogAdd_SourceQualifiedAvoidsCrossRepoCollision(t *testing.T) {
 func TestCatalogAdd_NormalizationCollisionRejected(t *testing.T) {
 	path := tempVendoredPath(t)
 	const commit = "bc6708cbbc37adb919157f04d31e601e68f4b9c2"
-	// Seed an entry whose (namespace, name) is "a-b-c"/"x" but whose
-	// internal_ref came from a *different* repo layout (owner=a-b, repo=c).
+	// Seed an entry whose (namespace, name) is "a-b-c"/"x" sourced from a
+	// *different* repo layout (owner=a-b, repo=c → repo "a-b/c").
 	seed := catalog.Vendored{SchemaVersion: 1, Skills: []catalog.VendoredEntry{{
 		Name: "x", Namespace: "a-b-c", Repo: "a-b/c",
 		Subpath: "x", Commit: commit,
-		InternalRef: "ghcr.io/liatrio/skills/a-b/c/x",
 	}}}
 	if err := catalog.WriteVendoredAtomic(path, seed); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -1201,14 +1095,13 @@ func TestCatalogAdd_NormalizationCollisionRejected(t *testing.T) {
 
 	out := &bytes.Buffer{}
 	// owner=a, repo=b-c also normalizes to "a-b-c"; skill "x" → same identity,
-	// but a different internal_ref (ghcr.io/liatrio/skills/a/b-c/x).
+	// but a different source repo ("a/b-c").
 	o := addOpts{
 		URL:          "https://github.com/a/b-c/tree/v1.0.0/x",
-		Namespace:    "ghcr.io/liatrio/skills",
 		VendoredPath: path,
 		Yes:          true,
 	}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, configAccessor{}, fakeResolver{commit: commit}, fakeFetcher{writeSkillMD: true})
+	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), o, fakeResolver{commit: commit}, fakeFetcher{writeSkillMD: true})
 	if err == nil {
 		t.Fatal("expected a namespace-collision error, got nil")
 	}
@@ -1217,36 +1110,7 @@ func TestCatalogAdd_NormalizationCollisionRejected(t *testing.T) {
 	}
 	// The seeded entry must be untouched.
 	v := loadVendoredFromDisk(t, path)
-	if len(v.Skills) != 1 || v.Skills[0].InternalRef != "ghcr.io/liatrio/skills/a-b/c/x" {
+	if len(v.Skills) != 1 || v.Skills[0].Repo != "a-b/c" {
 		t.Errorf("seeded entry was modified: %+v", v.Skills)
-	}
-}
-
-// TestCatalogAdd_RejectsUnderQualifiedNamespace is the regression guard for the
-// incident where an under-qualified internal_ref `liatrio/<name>` (missing the
-// registry host) reached vendored.json. The default discovery path now always
-// source-qualifies to <base>/<owner>/<repo>/<name>, so the only remaining way to
-// under-qualify is a manual `--internal-ref` override. The consumer's registry
-// parser requires <registry>/<namespace>/<name>, so the write-path
-// ValidateVendored gate must reject it and write nothing.
-func TestCatalogAdd_RejectsUnderQualifiedNamespace(t *testing.T) {
-	out := &bytes.Buffer{}
-	vendoredPath := tempVendoredPath(t)
-
-	opts := addOpts{
-		URL:          "https://github.com/anthropics/skills/tree/v1.0.0/skills/create-skill",
-		InternalRef:  "liatrio/create-skill", // two-segment override, missing registry host
-		VendoredPath: vendoredPath,
-	}
-	res := fakeResolver{commit: "bc6708cbbc37adb919157f04d31e601e68f4b9c2"}
-	err := runCatalogAddWithDeps(context.Background(), out, strings.NewReader(""), opts, configAccessor{}, res, fakeFetcher{writeSkillMD: true})
-	if err == nil {
-		t.Fatal("runCatalogAddWithDeps accepted an under-qualified internal_ref")
-	}
-	if !strings.Contains(err.Error(), "internal_ref") && !strings.Contains(err.Error(), "<registry>/<namespace>") {
-		t.Errorf("error %q lacks internal_ref/format context", err.Error())
-	}
-	if _, statErr := os.Stat(vendoredPath); !os.IsNotExist(statErr) {
-		t.Errorf("a rejected add must not write vendored.json (found file at %s)", vendoredPath)
 	}
 }

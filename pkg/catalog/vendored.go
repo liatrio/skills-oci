@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strings"
 )
 
 // vendoredSchemaVersion is the only schemaVersion this package writes and
@@ -18,27 +17,31 @@ const vendoredSchemaVersion = 1
 // Vendored is the on-disk shape of vendored.json — the desired-state list of
 // third-party skills vendored into this repo. It is a cross-repo contract: the
 // out-of-scope `core` reader parses exactly this shape, so the JSON tags
-// (camelCase `schemaVersion`, snake_case `internal_ref`) are load-bearing and
-// must not drift. `catalog add` is the producer; `core` is the consumer.
+// (camelCase `schemaVersion`) are load-bearing and must not drift. `catalog
+// add` is the producer; `core` is the consumer. The destination OCI ref is
+// NOT stored here: the registry host and base namespace are a deployment
+// parameter the consumer owns (its `writeRepo` config), and `core` derives the
+// ref as `<writeRepo>/<repo>/<name>` at processing time.
 type Vendored struct {
 	SchemaVersion int             `json:"schemaVersion"`
 	Skills        []VendoredEntry `json:"skills"`
 }
 
-// VendoredEntry is one source-pin in vendored.json. `commit` is always the
-// resolved 40-character lowercase hex SHA — the immutability property the
-// consuming `core` reader relies on. `license` is the SPDX-style license
-// string copied from the upstream SKILL.md frontmatter; it is optional
-// (omitted when the upstream skill declares none) and informational only —
-// validation does not require it.
+// VendoredEntry is one source-pin in vendored.json: the upstream coordinates
+// (`repo` + `subpath`) and the resolved `commit` — always the 40-character
+// lowercase hex SHA, the immutability property the consuming `core` reader
+// relies on. `namespace` is the source-qualified catalog identity. There is no
+// destination ref field: `core` derives it from its own `writeRepo` config
+// plus `repo`/`name`. `license` is the SPDX-style license string copied from
+// the upstream SKILL.md frontmatter; it is optional (omitted when the upstream
+// skill declares none) and informational only — validation does not require it.
 type VendoredEntry struct {
-	Name        string `json:"name"`
-	Namespace   string `json:"namespace"`
-	Repo        string `json:"repo"`
-	Subpath     string `json:"subpath"`
-	Commit      string `json:"commit"`
-	InternalRef string `json:"internal_ref"`
-	License     string `json:"license,omitempty"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+	Repo      string `json:"repo"`
+	Subpath   string `json:"subpath"`
+	Commit    string `json:"commit"`
+	License   string `json:"license,omitempty"`
 }
 
 // LoadVendored parses vendored.json bytes into a Vendored value. Like Load, it
@@ -57,9 +60,9 @@ func LoadVendored(data []byte) (Vendored, error) {
 }
 
 // ValidateVendored enforces the vendored.json contract: schemaVersion must be
-// exactly 1, every entry must have all six fields populated, and every
-// `commit` must be a 40-character lowercase hex Git SHA (commitPattern). An
-// empty skills list is valid.
+// exactly 1, every entry must have all required coordinate fields populated,
+// and every `commit` must be a 40-character lowercase hex Git SHA
+// (commitPattern). An empty skills list is valid.
 func ValidateVendored(v Vendored) error {
 	if v.SchemaVersion != vendoredSchemaVersion {
 		return fmt.Errorf("schemaVersion: want %d, got %d", vendoredSchemaVersion, v.SchemaVersion)
@@ -74,36 +77,9 @@ func ValidateVendored(v Vendored) error {
 			return fmt.Errorf("skills[%d].repo: must not be empty", i)
 		case e.Subpath == "":
 			return fmt.Errorf("skills[%d].subpath: must not be empty", i)
-		case e.InternalRef == "":
-			return fmt.Errorf("skills[%d].internal_ref: must not be empty", i)
-		}
-		if err := ValidateInternalRef(e.InternalRef); err != nil {
-			return fmt.Errorf("skills[%d].internal_ref: %w", i, err)
 		}
 		if !commitPattern.MatchString(e.Commit) {
 			return fmt.Errorf("skills[%d].commit: must be a 40-char lowercase hex SHA, got %q", i, e.Commit)
-		}
-	}
-	return nil
-}
-
-// ValidateInternalRef enforces the registry-reference grammar the consuming
-// `core` reader requires: an internal_ref must be "<registry>/<namespace>/<name>"
-// — at least three non-empty, slash-separated segments (everything between the
-// registry host and the final name segment is the namespace, so both flat
-// `ghcr.io/org/name` and nested `ghcr.io/org/skills/name` layouts pass). This is
-// the producer-side mirror of core/internal/registry.ParseRef; keep the two in
-// lockstep. Without it, an under-qualified namespace (e.g. `--namespace liatrio`
-// → `liatrio/<name>`) would be written here and only rejected downstream in the
-// catalog-sync build.
-func ValidateInternalRef(ref string) error {
-	parts := strings.Split(strings.TrimSpace(ref), "/")
-	if len(parts) < 3 {
-		return fmt.Errorf("must be <registry>/<namespace>/<name>, got %q", ref)
-	}
-	for _, p := range parts {
-		if p == "" {
-			return fmt.Errorf("has an empty path segment: %q", ref)
 		}
 	}
 	return nil

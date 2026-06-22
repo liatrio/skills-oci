@@ -31,13 +31,11 @@ var repoSegmentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 // layer parses flags + positional into this struct so the orchestration
 // logic in runCatalogAddWithDeps stays clean and testable.
 type addOpts struct {
-	URL         string // positional arg, may be empty when using flag form
-	Repo        string
-	Subpath     string
-	Version     string
-	Name        string
-	InternalRef string
-	Namespace   string
+	URL     string // positional arg, may be empty when using flag form
+	Repo    string
+	Subpath string
+	Version string
+	Name    string
 	// VendoredPath is the output vendored.json path (default vendored.json).
 	// catalog add is purely a vendored.json mutator: it touches no other file.
 	VendoredPath string
@@ -134,8 +132,6 @@ func newCatalogAddCmd() *cobra.Command {
 	cmd.Flags().String("subpath", "", "Path within the upstream repo; a skill directory vendors one skill, a container directory discovers and vendors all skills beneath it")
 	cmd.Flags().String("version", "", "Upstream tag, branch, or 40-hex commit SHA to vendor (resolved to an immutable commit SHA, which is recorded as the entry's commit pin)")
 	cmd.Flags().String("name", "", "Local entry name for a single skill (default: last segment of the subpath); not allowed when multiple skills are discovered")
-	cmd.Flags().String("internal-ref", "", "Destination OCI ref without tag for a single skill (overrides --namespace derivation); not allowed when multiple skills are discovered")
-	cmd.Flags().String("namespace", "", "Destination namespace prefix; combined with --name to derive --internal-ref")
 	cmd.Flags().String("vendored", "vendored.json", "Path to vendored.json")
 	cmd.Flags().BoolP("yes", "y", false, "Overwrite an existing entry without prompting (required to overwrite in non-interactive/--plain mode)")
 	cmd.Flags().Bool("dry-run", false, "Print the would-be entry and exit without writing vendored.json")
@@ -148,7 +144,7 @@ func runCatalogAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runCatalogAddWithDeps(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), opts, configFromContextAccessor(cmd.Context()), realResolver{}, realPuller{})
+	return runCatalogAddWithDeps(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), opts, realResolver{}, realPuller{})
 }
 
 // parseAddOpts is split out for testability — it has no IO and no
@@ -163,8 +159,6 @@ func parseAddOpts(cmd *cobra.Command, args []string) (addOpts, error) {
 	o.Subpath, _ = cmd.Flags().GetString("subpath")
 	o.Version, _ = cmd.Flags().GetString("version")
 	o.Name, _ = cmd.Flags().GetString("name")
-	o.InternalRef, _ = cmd.Flags().GetString("internal-ref")
-	o.Namespace, _ = cmd.Flags().GetString("namespace")
 	o.VendoredPath, _ = cmd.Flags().GetString("vendored")
 	o.Yes, _ = cmd.Flags().GetBool("yes")
 	o.DryRun, _ = cmd.Flags().GetBool("dry-run")
@@ -197,9 +191,7 @@ type plannedEntry struct {
 // every SKILL.md directory inside it, and vendors each. A URL/flag subpath
 // that is itself a skill discovers exactly itself (the classic single-skill
 // case). Any error before the final write leaves vendored.json untouched.
-func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o addOpts, cfg interface {
-	GetDefaultNamespace() string
-}, res resolver, pul puller) error {
+func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o addOpts, res resolver, pul puller) error {
 	// Step 1: parse URL or flag form into the upstream-side fields. Subpath
 	// and version may be empty for the repo-root and bare-repo URL forms.
 	owner, repo, rootSubpath, version, err := resolveUpstreamInputs(o)
@@ -245,14 +237,13 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 	}
 
 	// singleTarget is the classic case: the URL/flag subpath is itself a
-	// skill. Only then do --name / --internal-ref overrides apply. Any other
-	// shape (a container directory, a repo root, or more than one discovered
-	// skill) is discovery mode, where each skill is auto-named from its
-	// directory and only --namespace governs the destination.
+	// skill. Only then does the --name override apply. Any other shape (a
+	// container directory, a repo root, or more than one discovered skill) is
+	// discovery mode, where each skill is auto-named from its directory.
 	singleTarget := len(subpaths) == 1 && rootSubpath != "" && subpaths[0] == rootSubpath
 	if !singleTarget {
-		if o.Name != "" || o.InternalRef != "" {
-			return fmt.Errorf("--name and --internal-ref apply only to a single skill, but %d were discovered under %q; use --namespace instead", len(subpaths), rootSubpath)
+		if o.Name != "" {
+			return fmt.Errorf("--name applies only to a single skill, but %d were discovered under %q", len(subpaths), rootSubpath)
 		}
 		where := "repo " + owner + "/" + repo
 		if rootSubpath != "" {
@@ -276,20 +267,17 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 		if singleTarget && o.Name != "" {
 			name = o.Name
 		}
-		internalRef, err := resolveInternalRef(o, cfg, owner, repo, name)
-		if err != nil {
-			return err
-		}
 		// Catalog identity is source-qualified: namespace = <owner>-<repo>
 		//. This source-qualifies the (namespace, name) key so two
 		// source repos shipping a skill with the same name no longer collide.
 		namespace := sourceNamespace(owner, repo)
+		sourceRepo := owner + "/" + repo
 		// Residual-collision guard: distinct repos can normalize to the same
 		// namespace token (e.g. `a_b/c` and `a/b-c` → `a-b-c`). If the computed
-		// (namespace, name) already maps to a *different* internal_ref, fail
-		// rather than silently overwrite a different source.
-		if existing, ok := findVendoredEntry(cur, namespace, name); ok && existing.InternalRef != internalRef {
-			return fmt.Errorf("namespace collision: %s/%s already maps to internal_ref %q from a different source; refusing to overwrite it with %q", namespace, name, existing.InternalRef, internalRef)
+		// (namespace, name) already maps to a *different* upstream source repo,
+		// fail rather than silently overwrite a different source.
+		if existing, ok := findVendoredEntry(cur, namespace, name); ok && existing.Repo != sourceRepo {
+			return fmt.Errorf("namespace collision: %s/%s already maps to source repo %q from a different upstream; refusing to overwrite it with %q", namespace, name, existing.Repo, sourceRepo)
 		}
 
 		verifyLabel := "SKILL.md"
@@ -311,13 +299,12 @@ func runCatalogAddWithDeps(ctx context.Context, out io.Writer, in io.Reader, o a
 
 		planned = append(planned, plannedEntry{
 			entry: catalog.VendoredEntry{
-				Name:        name,
-				Namespace:   namespace,
-				Repo:        owner + "/" + repo,
-				Subpath:     subpath,
-				Commit:      commit,
-				InternalRef: internalRef,
-				License:     parsed.Config.License,
+				Name:      name,
+				Namespace: namespace,
+				Repo:      sourceRepo,
+				Subpath:   subpath,
+				Commit:    commit,
+				License:   parsed.Config.License,
 			},
 			overwrites: vendoredHasEntry(cur, namespace, name),
 		})
@@ -540,45 +527,4 @@ func resolveUpstreamInputs(o addOpts) (owner, repo, subpath, version string, err
 		return "", "", "", "", fmt.Errorf("--version is required when not using a URL")
 	}
 	return parts[0], parts[1], strings.Trim(o.Subpath, "/"), o.Version, nil
-}
-
-// resolveInternalRef computes the destination OCI ref. Unless overridden, it is
-// source-qualified at owner/repo granularity:
-// `<base-namespace>/<owner>/<repo>/<name>` (owner/repo lowercased for OCI). The
-// base namespace is resolved by the precedence chain:
-// --internal-ref > --namespace flag > project config default_namespace
-// > SKILLS_OCI_DEFAULT_NAMESPACE env var > error. `--internal-ref` is a full
-// manual override of the OCI ref and bypasses the owner/repo qualification.
-func resolveInternalRef(o addOpts, cfg interface{ GetDefaultNamespace() string }, owner, repo, name string) (string, error) {
-	if o.InternalRef != "" {
-		return o.InternalRef, nil
-	}
-	ns := o.Namespace
-	if ns == "" && cfg != nil {
-		ns = cfg.GetDefaultNamespace()
-	}
-	if ns == "" {
-		ns = os.Getenv("SKILLS_OCI_DEFAULT_NAMESPACE")
-	}
-	if ns == "" {
-		return "", fmt.Errorf("no default namespace configured; pass --namespace, set catalog.default_namespace in .skills-oci.yaml, or export SKILLS_OCI_DEFAULT_NAMESPACE")
-	}
-	return strings.TrimRight(ns, "/") + "/" + strings.ToLower(owner) + "/" + strings.ToLower(repo) + "/" + name, nil
-}
-
-// configAccessor adapts config.Config to the small interface
-// runCatalogAddWithDeps expects, so the orchestrator does not import
-// the config package directly (keeping that boundary clean).
-type configAccessor struct {
-	defaultNamespace string
-}
-
-func (c configAccessor) GetDefaultNamespace() string { return c.defaultNamespace }
-
-// configFromContextAccessor wraps configFromContext into the interface
-// shape the orchestrator expects. Used by the production wiring; tests
-// pass their own configAccessor directly.
-func configFromContextAccessor(ctx context.Context) configAccessor {
-	cfg := configFromContext(ctx)
-	return configAccessor{defaultNamespace: cfg.Catalog.DefaultNamespace}
 }

@@ -11,18 +11,17 @@ import (
 // validVendoredEntry returns a fully-populated, valid VendoredEntry for reuse.
 func validVendoredEntry() VendoredEntry {
 	return VendoredEntry{
-		Name:        "manage-pull-requests",
-		Namespace:   "liatrio-labs",
-		Repo:        "liatrio-labs/skills",
-		Subpath:     "skills/manage-pull-requests",
-		Commit:      "0123456789abcdef0123456789abcdef01234567",
-		InternalRef: "ghcr.io/liatrio-labs/manage-pull-requests",
+		Name:      "manage-pull-requests",
+		Namespace: "liatrio-labs",
+		Repo:      "liatrio-labs/skills",
+		Subpath:   "skills/manage-pull-requests",
+		Commit:    "0123456789abcdef0123456789abcdef01234567",
 	}
 }
 
 func TestLoadVendored_RoundTrip(t *testing.T) {
-	// Arrange: the plan's exact JSON shape — camelCase schemaVersion, snake_case
-	// internal_ref, the 7 string entry fields.
+	// Arrange: the on-disk JSON shape — camelCase schemaVersion, the upstream
+	// coordinate fields (no destination ref; the consumer derives it).
 	in := []byte(`{
   "schemaVersion": 1,
   "skills": [
@@ -31,8 +30,7 @@ func TestLoadVendored_RoundTrip(t *testing.T) {
       "namespace": "liatrio-labs",
       "repo": "liatrio-labs/skills",
       "subpath": "skills/manage-pull-requests",
-      "commit": "0123456789abcdef0123456789abcdef01234567",
-      "internal_ref": "ghcr.io/liatrio-labs/manage-pull-requests"
+      "commit": "0123456789abcdef0123456789abcdef01234567"
     }
   ]
 }`)
@@ -85,7 +83,6 @@ func TestVendored_LicenseRoundTrip(t *testing.T) {
       "repo": "liatrio-labs/skills",
       "subpath": "skills/manage-pull-requests",
       "commit": "0123456789abcdef0123456789abcdef01234567",
-      "internal_ref": "ghcr.io/liatrio-labs/manage-pull-requests",
       "license": "Apache-2.0"
     }
   ]
@@ -170,12 +167,6 @@ func TestValidateVendored(t *testing.T) {
 		{"missing repo", missing(func(e *VendoredEntry) { e.Repo = "" }), true},
 		{"missing subpath", missing(func(e *VendoredEntry) { e.Subpath = "" }), true},
 		{"missing commit", missing(func(e *VendoredEntry) { e.Commit = "" }), true},
-		{"missing internal_ref", missing(func(e *VendoredEntry) { e.InternalRef = "" }), true},
-		{"internal_ref missing registry host", missing(func(e *VendoredEntry) { e.InternalRef = "liatrio/manage-pull-requests" }), true},
-		{"internal_ref single segment", missing(func(e *VendoredEntry) { e.InternalRef = "manage-pull-requests" }), true},
-		{"internal_ref empty middle segment", missing(func(e *VendoredEntry) { e.InternalRef = "ghcr.io//manage-pull-requests" }), true},
-		{"internal_ref valid three-segment", missing(func(e *VendoredEntry) { e.InternalRef = "ghcr.io/liatrio/manage-pull-requests" }), false},
-		{"internal_ref valid nested four-segment", missing(func(e *VendoredEntry) { e.InternalRef = "ghcr.io/liatrio/skills/manage-pull-requests" }), false},
 		{"commit too short", missing(func(e *VendoredEntry) { e.Commit = "0123abc" }), true},
 		{"commit uppercase", missing(func(e *VendoredEntry) { e.Commit = strings.ToUpper(validVendoredEntry().Commit) }), true},
 		{"commit non-hex", missing(func(e *VendoredEntry) { e.Commit = "g123456789abcdef0123456789abcdef01234567" }), true},
@@ -196,9 +187,9 @@ func TestValidateVendored(t *testing.T) {
 func TestUpsertVendored(t *testing.T) {
 	t.Run("append new keeps deterministic order", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-			{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-b/zebra"},
+			{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit},
 		}}
-		add := VendoredEntry{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-a/alpha"}
+		add := VendoredEntry{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit}
 		got, replaced := UpsertVendored(base, add)
 		if replaced {
 			t.Errorf("replaced = true, want false for new entry")
@@ -214,9 +205,9 @@ func TestUpsertVendored(t *testing.T) {
 
 	t.Run("orders by name within the same namespace", func(t *testing.T) {
 		base := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-			{Name: "yak", Namespace: "ns", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns/yak"},
+			{Name: "yak", Namespace: "ns", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit},
 		}}
-		add := VendoredEntry{Name: "ant", Namespace: "ns", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "ns/ant"}
+		add := VendoredEntry{Name: "ant", Namespace: "ns", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit}
 		got, _ := UpsertVendored(base, add)
 		if got.Skills[0].Name != "ant" || got.Skills[1].Name != "yak" {
 			t.Errorf("name order = [%s, %s], want [ant, yak]", got.Skills[0].Name, got.Skills[1].Name)
@@ -264,8 +255,8 @@ func TestWriteVendoredAtomic(t *testing.T) {
 
 	// Unsorted input; the writer should persist in deterministic order.
 	v := Vendored{SchemaVersion: 1, Skills: []VendoredEntry{
-		{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-b/zebra"},
-		{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit, InternalRef: "r/ns-a/alpha"},
+		{Name: "zebra", Namespace: "ns-b", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit},
+		{Name: "alpha", Namespace: "ns-a", Repo: "o/r", Subpath: "s", Commit: validVendoredEntry().Commit},
 	}}
 	if err := WriteVendoredAtomic(path, v); err != nil {
 		t.Fatalf("WriteVendoredAtomic: %v", err)

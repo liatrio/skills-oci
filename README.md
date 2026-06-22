@@ -200,48 +200,41 @@ This removes the skill from `skills.json`, `skills.lock.json`, and deletes the e
 
 `skills-oci catalog add` records one or more third-party skills in a `vendored.json` desired-state file. It resolves an upstream GitHub reference to an **immutable commit SHA**, verifies that the upstream content actually contains a `SKILL.md`, and upserts an entry per skill. It never contacts the destination registry.
 
-**Single skill vs. discovery.** If the URL/subpath points directly at a skill directory (one containing `SKILL.md`), exactly that skill is vendored — the classic single-skill case. If it points at a **container** (a directory or whole repo with no `SKILL.md` of its own), `catalog add` recursively discovers every directory that contains a `SKILL.md` and vendors each one, auto-naming it from its directory. Discovery stops descending once it finds a skill, so a skill's own nested example skills are not vendored separately. In discovery mode, `--name`/`--internal-ref` do not apply (each skill is named from its directory) — set `--namespace` instead.
+**Single skill vs. discovery.** If the URL/subpath points directly at a skill directory (one containing `SKILL.md`), exactly that skill is vendored — the classic single-skill case. If it points at a **container** (a directory or whole repo with no `SKILL.md` of its own), `catalog add` recursively discovers every directory that contains a `SKILL.md` and vendors each one, auto-naming it from its directory. Discovery stops descending once it finds a skill, so a skill's own nested example skills are not vendored separately. In discovery mode, `--name` does not apply (each skill is named from its directory).
 
 **Accepted URL forms.** A directory at a ref (`.../tree/<ref>/<subpath>`), a repo root at a ref (`.../tree/<ref>`), or a bare repo (`https://github.com/<owner>/<repo>`). For a bare repo the **default branch** is resolved to its head commit and that SHA is recorded as the entry's commit pin.
 
-**Recorded fields.** Each entry pins `name`, `namespace`, `repo`, `subpath`, `commit` (the resolved 40-hex SHA), and `internal_ref` (the destination OCI ref). When the upstream `SKILL.md` declares a `license`, it is copied verbatim into an optional `license` field; entries whose upstream skill declares no license omit it.
+**Recorded fields.** Each entry pins `name`, `namespace`, `repo`, `subpath`, and `commit` (the resolved 40-hex SHA). When the upstream `SKILL.md` declares a `license`, it is copied verbatim into an optional `license` field; entries whose upstream skill declares no license omit it. The destination OCI ref is **not** stored: the registry host and base namespace are owned by the consumer (skills-platform), which derives the ref as `<writeRepo>/<repo>/<name>` from its own config at processing time.
 
-**Source-qualified namespacing.** Vendored skills are namespaced by their source repository so two upstreams that ship a skill with the same name never collide. `--namespace` (or the config/env default) supplies the **base OCI namespace** — a registry-qualified prefix such as `ghcr.io/liatrio/skills` — and `catalog add` qualifies it with the source repo:
-
-- `internal_ref` = `<base-namespace>/<owner>/<repo>/<name>` (owner/repo lowercased), e.g. `ghcr.io/liatrio/skills/mattpocock/skills/review`.
-- catalog `namespace` = `<owner>-<repo>` normalized to a single kebab token, e.g. `mattpocock-skills`.
-
-If two distinct source repos normalize to the same `(namespace, name)` but a different `internal_ref`, the add fails rather than silently overwriting the other source. `--internal-ref` (single-skill only) is a full manual override of the OCI ref and bypasses this qualification.
+**Source-qualified namespacing.** Vendored skills are namespaced by their source repository so two upstreams that ship a skill with the same name never collide. The catalog `namespace` = `<owner>-<repo>` normalized to a single kebab token, e.g. `mattpocock-skills`. If two distinct source repos normalize to the same `(namespace, name)` but a different source repo, the add fails rather than silently overwriting the other source.
 
 Re-adding a skill that is already listed **overwrites** its pin in place (matched by `(namespace, name)`). On an interactive terminal you are prompted per skill before each overwrite; new skills are added without prompting. In a non-interactive context (`--plain`, piped/no TTY) an overwrite requires `-y`/`--yes` — otherwise the command exits non-zero, naming the conflicts, without writing.
 
 ```bash
 # Single skill, URL form (tag)
-skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/skill-creator --namespace ghcr.io/liatrio/skills
+skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills/skill-creator
 
 # Single skill, URL form (branch) — the branch head is resolved and the resulting SHA is recorded as the row's commit pin
-skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator --namespace ghcr.io/liatrio/skills
+skills-oci catalog add https://github.com/anthropics/skills/tree/main/skills/skill-creator
 
 # Many skills — repo root at a commit: discovers every SKILL.md directory and vendors each
-skills-oci catalog add https://github.com/anthropics/skills/tree/da20c92503b2e8ff1cf28ca81a0df4673debdbf7 --namespace ghcr.io/liatrio/skills
+skills-oci catalog add https://github.com/anthropics/skills/tree/da20c92503b2e8ff1cf28ca81a0df4673debdbf7
 
 # Many skills — bare repo: resolves the default branch, then discovers all skills
-skills-oci catalog add https://github.com/vercel-labs/agent-skills --namespace ghcr.io/liatrio/skills
+skills-oci catalog add https://github.com/vercel-labs/agent-skills
 
 # Many skills under a container subpath
-skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills --namespace ghcr.io/liatrio/skills
+skills-oci catalog add https://github.com/anthropics/skills/tree/v1.0.0/skills
 
 # Flag form (single skill)
-skills-oci catalog add --repo anthropics/skills --subpath skills/skill-creator --version v1.0.0 --namespace ghcr.io/liatrio/skills
+skills-oci catalog add --repo anthropics/skills --subpath skills/skill-creator --version v1.0.0
 
 # Overwrite existing entries non-interactively (CI / --plain) — overwrites every discovered skill
-skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0 --namespace ghcr.io/liatrio/skills
+skills-oci catalog add --plain -y https://github.com/anthropics/skills/tree/v1.1.0
 
 # Dry run prints the would-be entries without writing vendored.json
-skills-oci catalog add <URL> --namespace ghcr.io/liatrio/skills --dry-run
+skills-oci catalog add <URL> --dry-run
 ```
-
-The base OCI namespace is resolved by precedence: `--internal-ref` > `--namespace` flag > `catalog.default_namespace` in `.skills-oci.yaml` > `SKILLS_OCI_DEFAULT_NAMESPACE`. The resolved base is then source-qualified to `<base>/<owner>/<repo>/<name>` (except when `--internal-ref` overrides the whole ref). Pass a registry-qualified base such as `ghcr.io/liatrio/skills`, not a bare org.
 
 | Flag | Description |
 |------|-------------|
@@ -249,7 +242,6 @@ The base OCI namespace is resolved by precedence: `--internal-ref` > `--namespac
 | `--subpath` | Path within the upstream repo. A skill directory vendors that one skill; a container directory discovers and vendors every skill beneath it |
 | `--version` | Upstream tag, branch, or 40-hex commit SHA to vendor. Resolved to an immutable commit SHA, which is recorded as the entry's commit pin. Omit (bare-repo URL only) to resolve the default branch |
 | `--name` | Local entry name (single-skill only; default: last segment of the upstream subpath). Ignored — and rejected — in discovery mode |
-| `--namespace` / `--internal-ref` | Base OCI namespace (registry-qualified, e.g. `ghcr.io/liatrio/skills`; source-qualified to `<base>/<owner>/<repo>/<name>`) / fully-qualified OCI ref override. `--internal-ref` is single-skill only and bypasses source-qualification |
 | `--vendored` | Path to `vendored.json` (default `vendored.json`) |
 | `-y`, `--yes` | Overwrite existing entries without prompting (required to overwrite under `--plain` / non-interactive) |
 | `--timeout` | Maximum time for the network-bound resolve + checkout steps (default `60s`) |
